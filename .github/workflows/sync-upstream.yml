@@ -148,4 +148,5 @@ jobs:
 
       - name: Dry run complete
         if: steps.merge.outputs.conflict == 'false' && inputs.dry_run
-        run: echo "Dry run: merge, build and tests succeeded; nothing was pushed" >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          echo "Dry run: merge, build and tests succeeded; nothing was pushed" >> "$GITHUB_STEP_SUMMARY"
