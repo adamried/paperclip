@@ -14,5 +14,8 @@ if [ -z "$NODE" ]; then
   done
 fi
 if [ -z "$NODE" ]; then echo "paperclipai launcher: node not found; set PAPERCLIP_NODE" >&2; exit 1; fi
-export PATH="$(dirname "$NODE"):${PATH:-/usr/local/bin:/usr/bin:/bin}"
+# A service manager starts this with a minimal PATH. Agent harness CLIs
+# (claude, codex, gh, ...) are usually installed per user, so add the common
+# user and package-manager bin directories the way an interactive shell would.
+export PATH="$(dirname "$NODE"):$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:${PATH:-/usr/bin:/bin}"
 exec "$NODE" "$REPO/cli/node_modules/tsx/dist/cli.mjs" "$REPO/cli/src/index.ts" "$@"

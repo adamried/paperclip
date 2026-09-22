@@ -1059,7 +1059,18 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
         visibleEnvironmentIds: environmentList.map((environment) => environment.id),
       });
       const adapterConfig = buildAdapterConfigForTest(adapterConfigPatch);
-      const agentId = isCreate ? undefined : props.agent.id;
+      // The server only accepts a saved agent id when the adapter under test
+      // matches that agent's saved harness (it restores redacted env values
+      // from the saved config). When the user is switching harness, test as a
+      // fresh configuration instead of failing with "not compatible".
+      const savedAdapterType = isCreate ? null : props.agent.adapterType;
+      const savedProviderAdapter = savedAdapterType === "paperclip_runner"
+        ? adapterConfig.provider === "codex" ? "codex_local"
+          : adapterConfig.provider === "acpx" && adapterConfig.acpxAgent === "claude" ? "claude_local"
+            : null
+        : null;
+      const savedAgentMatchesHarness = savedAdapterType === adapterType || savedProviderAdapter === adapterType;
+      const agentId = isCreate || !savedAgentMatchesHarness ? undefined : props.agent.id;
       const aiConnection = isCreate ? undefined : aiConnectionBindingSchema.safeParse(
         (overlay.runtime.runtimeConfig as Record<string, unknown> | undefined)?.aiConnection ?? props.agent.runtimeConfig.aiConnection,
       ).data;
