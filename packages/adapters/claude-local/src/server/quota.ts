@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -126,6 +128,69 @@ function parseClaudeCredential(raw: string): ClaudeCredential | null {
 
 function parseClaudeCredentialToken(raw: string): string | null {
   return parseClaudeCredential(raw)?.token ?? null;
+}
+
+// Claude Code on macOS stores the OAuth credential for a custom
+// CLAUDE_CONFIG_DIR in a per-directory Keychain item named
+// "Claude Code-credentials-<first 8 hex chars of sha256(dir)>" instead of a
+// credentials file in the directory, and it refreshes that item in place.
+// The suffix binds the item to exactly one auth home, so reading it can only
+// surface the login performed inside that home; the unsuffixed operator item
+// is never consulted here.
+export function isolatedClaudeKeychainService(configDir: string): string {
+  return `Claude Code-credentials-${createHash("sha256").update(configDir).digest("hex").slice(0, 8)}`;
+}
+
+// The CLI may hash the directory as given or after symlink resolution
+// (macOS temp dirs live under /var -> /private/var), so try both spellings.
+function isolatedClaudeKeychainServices(configDir: string): string[] {
+  const dirs = [configDir];
+  try {
+    const resolved = realpathSync(configDir);
+    if (resolved !== configDir) dirs.push(resolved);
+  } catch {}
+  return dirs.map(isolatedClaudeKeychainService);
+}
+
+async function readClaudeKeychainItem(service: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync("/usr/bin/security", ["find-generic-password", "-s", service, "-w"], { timeout: 10000, maxBuffer: 1024 * 1024 });
+    return stdout;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read the whole credential document that a `claude` login (or refresh)
+ * performed inside an isolated auth home left in the macOS Keychain. Returns
+ * null off macOS, when the item is absent, or when it is not a Claude
+ * credential document.
+ */
+export async function readIsolatedClaudeKeychainDocument(loginHome: string): Promise<string | null> {
+  if (process.platform !== "darwin") return null;
+  for (const service of isolatedClaudeKeychainServices(loginHome)) {
+    const raw = await readClaudeKeychainItem(service);
+    if (raw === null) continue;
+    const text = raw.trim();
+    if (parseClaudeCredential(text)) return text;
+  }
+  return null;
+}
+
+export async function readIsolatedClaudeKeychainToken(loginHome: string): Promise<string | null> {
+  const document = await readIsolatedClaudeKeychainDocument(loginHome);
+  return document ? parseClaudeCredentialToken(document) : null;
+}
+
+/** Remove the Keychain item(s) the CLI created for an isolated auth home. */
+export async function deleteIsolatedClaudeKeychainItem(configDir: string): Promise<void> {
+  if (process.platform !== "darwin") return;
+  for (const service of isolatedClaudeKeychainServices(configDir)) {
+    try {
+      await execFileAsync("/usr/bin/security", ["delete-generic-password", "-s", service], { timeout: 10000, maxBuffer: 1024 * 1024 });
+    } catch {}
+  }
 }
 
 interface ClaudeAuthStatus {

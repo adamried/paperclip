@@ -15,6 +15,48 @@ import { decideCodexAuthMerge } from "@paperclipai/adapter-codex-local/server";
 import type { AdapterExecutionTarget } from "@paperclipai/adapter-utils/execution-target";
 import { runAdapterExecutionTargetProcess } from "@paperclipai/adapter-utils/execution-target";
 import { decideGrokAuthMerge } from "@paperclipai/adapter-grok-local/server";
+import {
+  readIsolatedClaudeKeychainDocument,
+  deleteIsolatedClaudeKeychainItem,
+} from "@paperclipai/adapter-claude-local/server";
+
+/** The Claude credential document that Claude Code writes and rotates in place. */
+function claudeOauthBlock(
+  value: string,
+): { accessToken?: unknown; expiresAt?: unknown } | null {
+  try {
+    const parsed = JSON.parse(value) as { claudeAiOauth?: unknown };
+    const oauth = parsed?.claudeAiOauth;
+    return oauth && typeof oauth === "object" && !Array.isArray(oauth)
+      ? (oauth as { accessToken?: unknown; expiresAt?: unknown })
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function isClaudeCredentialDocument(value: string): boolean {
+  const oauth = claudeOauthBlock(value);
+  return typeof oauth?.accessToken === "string" && oauth.accessToken.length > 0;
+}
+
+/**
+ * The Claude counterpart of the Codex and Grok write-back predicates. It keeps
+ * whichever copy expires later, so a concurrent run that refreshed afterwards
+ * wins and a stale write-back never replaces a newer credential. It returns the
+ * decision codes the other predicates use: only 10 writes back.
+ */
+export function decideClaudeAuthMerge(refreshed: string, current: string): number {
+  const next = claudeOauthBlock(refreshed);
+  if (typeof next?.accessToken !== "string" || !next.accessToken.length) return 20;
+  const nextExpiry = typeof next.expiresAt === "number" ? next.expiresAt : null;
+  if (nextExpiry === null) return 20;
+  const previous = claudeOauthBlock(current);
+  const previousExpiry =
+    typeof previous?.expiresAt === "number" ? previous.expiresAt : null;
+  if (previousExpiry !== null && nextExpiry <= previousExpiry) return 22;
+  return 10;
+}
 
 export function isAiConnectionBusy(error: unknown): error is HttpError {
   return error instanceof HttpError && error.status === 422 &&
@@ -208,9 +250,7 @@ export async function prepareManagedAiRuntime(
     runnerProvider: input.config.provider,
     acpxAgent: input.config.acpxAgent,
   });
-  const subscriptionFile =
-    selection.attribution.method === "subscription" &&
-    input.binding.provider !== "anthropic";
+  const subscriptionSelected = selection.attribution.method === "subscription";
   let home: string | undefined;
   try {
     const selectedGrantId = selection.grant.id;
@@ -226,6 +266,15 @@ export async function prepareManagedAiRuntime(
         "The selected default changed. Retry this execution.",
       );
     const value = await service.credential(selection);
+    // Anthropic joins the file topology only when the stored credential is a
+    // whole Claude credential document (paperclipai/paperclip#13725).
+    // Connections saved before this change hold a bare token (setup-token or
+    // host login), which has no file for the CLI to rotate; they keep the
+    // env-var delivery so an upgrade never writes a non-document into
+    // `.credentials.json`.
+    const subscriptionFile =
+      subscriptionSelected &&
+      (input.binding.provider !== "anthropic" || isClaudeCredentialDocument(value));
     home = await mkdtemp(
       path.join(
         os.tmpdir(),
@@ -248,7 +297,12 @@ export async function prepareManagedAiRuntime(
       AI_CONNECTION_CAPABILITIES[input.binding.provider].methods[
         selection.attribution.method
       ]!;
-    const authFile = path.join(providerHome, "auth.json");
+    // Claude Code reads its credentials from `.credentials.json` under
+    // CLAUDE_CONFIG_DIR. Codex and Grok read `auth.json` from their own homes.
+    const authFile = path.join(
+      providerHome,
+      input.binding.provider === "anthropic" ? ".credentials.json" : "auth.json",
+    );
     if (input.binding.provider === "openai")
       await writeFile(
         path.join(providerHome, "config.toml"),
@@ -290,7 +344,16 @@ export async function prepareManagedAiRuntime(
       cleanup: async () => {
         try {
           if (subscriptionFile) {
-            const refreshed = await readFile(authFile, "utf8");
+            let refreshed =
+              input.binding.provider === "anthropic"
+                ? await readFile(authFile, "utf8").catch(() => value)
+                : await readFile(authFile, "utf8");
+            if (input.binding.provider === "anthropic" && refreshed === value) {
+              // On macOS Claude Code refreshes the Keychain item that is bound
+              // to CLAUDE_CONFIG_DIR, not the credentials file.
+              const fromKeychain = await readIsolatedClaudeKeychainDocument(providerHome);
+              if (fromKeychain) refreshed = fromKeychain;
+            }
             if (refreshed !== value)
               await db.transaction(async (tx) => {
                 const [grant] = await tx
@@ -335,13 +398,15 @@ export async function prepareManagedAiRuntime(
                 );
                 await writeFile(destination, current, { mode: 0o600 });
                 const decision =
-                  input.binding.provider === "openai"
-                    ? await decideCodexAuthMerge(authFile, destination, {
-                        errorLabel: "AI account refresh",
-                      })
-                    : await decideGrokAuthMerge(authFile, destination, {
-                        errorLabel: "AI account refresh",
-                      });
+                  input.binding.provider === "anthropic"
+                    ? decideClaudeAuthMerge(refreshed, current)
+                    : input.binding.provider === "openai"
+                      ? await decideCodexAuthMerge(authFile, destination, {
+                          errorLabel: "AI account refresh",
+                        })
+                      : await decideGrokAuthMerge(authFile, destination, {
+                          errorLabel: "AI account refresh",
+                        });
                 if (decision !== 10) return;
                 await secretService(tx).rotate(
                   ref.secretId,
@@ -355,6 +420,10 @@ export async function prepareManagedAiRuntime(
               });
           }
         } finally {
+          // The per-run Keychain item is bound to this throwaway home; never
+          // leave rotated credential material behind in the Keychain.
+          if (input.binding.provider === "anthropic" && subscriptionFile)
+            await deleteIsolatedClaudeKeychainItem(providerHome);
           if (home) await rm(home, { recursive: true, force: true });
         }
       },
