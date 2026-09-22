@@ -49,7 +49,25 @@ it.each(["anthropic", "openai"] as const)("detects an already-signed-in %s accou
   await vi.waitFor(() => expect(host.textContent).toContain("is signed in"));
   expect(host.textContent).not.toContain("Run this in a terminal");
   expect(api.connectLocal).not.toHaveBeenCalled();
-  if (provider === "anthropic") expect(api.startLocalLogin).not.toHaveBeenCalled();
+  // Anthropic now defaults to the separate sign-in even when the host login is allowed.
+  expect(api.startLocalLogin).toHaveBeenCalledTimes(1);
+});
+it("lets an Anthropic connection opt into the machine's existing login and back", async () => {
+  api.startLocalLogin.mockImplementation(async () => ({ sessionId: "attempt-1", command: "CLAUDE_CONFIG_DIR=/isolated claude auth login", expiresAt: "2099-01-01T00:00:00Z" }));
+  flushSync(() => root.render(<Harness provider="anthropic" />));
+  await vi.waitFor(() => expect(host.textContent).toContain("CLAUDE_CONFIG_DIR=/isolated claude auth login"));
+  expect(host.textContent).toContain("Use existing login");
+  flushSync(() => Array.from(host.querySelectorAll('button')).find(b => b.textContent === 'Use existing login')!.click());
+  await vi.waitFor(() => expect(host.textContent).toContain("Sign in separately instead"));
+  expect(host.textContent).toContain("claude auth login");
+  expect(host.textContent).not.toContain("CLAUDE_CONFIG_DIR=/isolated");
+  await vi.waitFor(() => expect(api.cancelLocalLogin).toHaveBeenCalledTimes(1));
+  flushSync(() => Array.from(host.querySelectorAll('button')).find(b => b.textContent === 'Connect')!.click());
+  await vi.waitFor(() => expect(api.connectLocal).toHaveBeenCalledTimes(1));
+  expect(api.connectLocal.mock.calls[0][1]).not.toHaveProperty("localSessionId");
+  flushSync(() => Array.from(host.querySelectorAll('button')).find(b => b.textContent === 'Sign in separately instead (recommended)')!.click());
+  await vi.waitFor(() => expect(api.startLocalLogin).toHaveBeenCalledTimes(2));
+  await vi.waitFor(() => expect(host.textContent).toContain("CLAUDE_CONFIG_DIR=/isolated claude auth login"));
 });
 it("detects terminal completion on focus without needing a Connect attempt", async () => {
   flushSync(() => root.render(<Harness />));

@@ -469,7 +469,11 @@ export function ProviderApiKeyCard({
 /** Shared instructions for local subscription setup in every authentication host. */
 export function LocalProviderLoginInstructions({ adapterType, login }: {
   adapterType: string;
-  login?: { isolated?: boolean; command?: string; preparing: boolean; status?: "ready" | "sign_in_required" | "expired" | null; error: string | null; retry: () => void };
+  login?: {
+    isolated?: boolean; command?: string; preparing: boolean; status?: "ready" | "sign_in_required" | "expired" | null; error: string | null; retry: () => void;
+    /** Anthropic only: the machine's existing Claude login may be reused instead of a separate sign-in. */
+    hostAllowed?: boolean; usingHost?: boolean; setUseHost?: (value: boolean) => void;
+  };
 }) {
   const [showCommand, setShowCommand] = useState(false);
   const provider = adapterType === "claude_local" ? "Claude Code" : adapterType === "grok_local" ? "Grok CLI" : "Codex CLI";
@@ -477,6 +481,14 @@ export function LocalProviderLoginInstructions({ adapterType, login }: {
   const command = isolated ? login?.command : "claude auth login";
   if (login?.preparing) return <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Checking local {provider} sign-in…</p>;
   const ready = login?.status === "ready";
+  const hostChoice = adapterType === "claude_local" && login?.hostAllowed && login.setUseHost
+    ? (login.usingHost
+      ? <p>Reusing this machine's existing Claude login. Its token cannot be refreshed and stops working after about 8 hours.{" "}
+          <button type="button" className="underline underline-offset-4" onClick={() => login.setUseHost?.(false)}>Sign in separately instead (recommended)</button></p>
+      : <p>Prefer to reuse this machine's existing Claude login?{" "}
+          <button type="button" className="underline underline-offset-4" onClick={() => login.setUseHost?.(true)}>Use existing login</button>
+          {" "}(its token cannot be refreshed and stops working after about 8 hours).</p>)
+    : null;
   return <div className="min-w-0 max-w-full space-y-3 text-sm text-muted-foreground">
     {ready ? <>
       <p role="status" className="flex items-center gap-2 text-foreground"><Check className="size-4 shrink-0 text-(--status-task-icon-done)" />{provider} is signed in. Click Connect to use this account.</p>
@@ -491,5 +503,6 @@ export function LocalProviderLoginInstructions({ adapterType, login }: {
     </>}
     {login?.error && <p role="alert">{login.error}</p>}
     {login && !login.preparing && (isolated || login.error) && <button type="button" className="underline underline-offset-4" onClick={login.retry}>{isolated ? "Start sign-in again" : "Check again"}</button>}
+    {hostChoice}
   </div>;
 }

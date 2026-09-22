@@ -4,7 +4,13 @@ import { aiConnectionsApi } from "@/api/ai-connections";
 
 /** Every authentication host uses the same local credential check and login lifecycle. */
 export function useLocalAiLogin(companyId: string | null, intent: AiConnectionLoginIntent, enabled: boolean, options: { allowHostClaude?: boolean } = {}) {
-  const isolated = intent.provider !== "anthropic" || !options.allowHostClaude;
+  // Anthropic on a local-trusted instance may reuse the machine's existing
+  // Claude login. That shortcut stores only a short-lived access token that
+  // nothing can refresh, so the separate sign-in is the default and the
+  // shortcut is an explicit opt-in the card explains.
+  const hostAllowed = intent.provider === "anthropic" && Boolean(options.allowHostClaude);
+  const [useHost, setUseHost] = useState(false);
+  const isolated = intent.provider !== "anthropic" || !(hostAllowed && useHost);
   const active = Boolean(companyId && enabled);
   const [attempt, setAttempt] = useState<LocalAiLoginAttempt | null>(null);
   const [status, setStatus] = useState<LocalAiLoginStatus["status"] | null>(null);
@@ -31,7 +37,7 @@ export function useLocalAiLogin(companyId: string | null, intent: AiConnectionLo
     let cancelled = false;
     let checking = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const key = JSON.stringify([companyId, target, generation]);
+    const key = JSON.stringify([companyId, target, generation, isolated]);
     if (isolated && current.current?.key !== key) {
       cancelCurrent();
       const input = { ...latestIntent.current, ...(restartRequested.current ? { restart: true } : {}) };
@@ -78,6 +84,17 @@ export function useLocalAiLogin(companyId: string | null, intent: AiConnectionLo
   }, [companyId, active, isolated, target, generation]);
   return {
     isolated,
+    hostAllowed,
+    usingHost: hostAllowed && useHost,
+    setUseHost: (value: boolean) => {
+      if (value === useHost) return;
+      // Leaving the separate flow abandons its attempt; entering it starts a new one.
+      if (!value || isolated) cancelCurrent();
+      setAttempt(null);
+      setStatus(null);
+      setError(null);
+      setUseHost(value);
+    },
     command: attempt?.command,
     status,
     preparing: active && !status && !error,
@@ -86,7 +103,8 @@ export function useLocalAiLogin(companyId: string | null, intent: AiConnectionLo
     connect: (input = intent) => {
       if (!companyId) throw new Error("Choose a company before connecting.");
       if (isolated && !attempt) throw new Error("Prepare local sign-in before connecting.");
-      return aiConnectionsApi.connectLocal(companyId, { ...input, ...(attempt ? { localSessionId: attempt.sessionId } : {}) });
+      // Only the separate flow owns a session; never attach one to a host-login connect.
+      return aiConnectionsApi.connectLocal(companyId, { ...input, ...(isolated && attempt ? { localSessionId: attempt.sessionId } : {}) });
     },
   };
 }
