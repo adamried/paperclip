@@ -1,0 +1,17 @@
+#!/bin/sh
+# Paperclip fork launcher: runs the CLI from this checkout's TypeScript source
+# via tsx, so `paperclipai run` serves the code currently in the working tree
+# (server/ and packages/ from their built dist/, the UI from ui/dist).
+# Register as a background service with:
+#   PAPERCLIP_SHIM_PATH="$PWD/bin/paperclipai" bin/paperclipai service install
+set -eu
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+NODE="${PAPERCLIP_NODE:-}"
+if [ -z "$NODE" ]; then
+  for candidate in "$(command -v node 2>/dev/null || true)" "$HOME/.hermes/node/bin/node" /opt/homebrew/bin/node /usr/local/bin/node; do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then NODE="$candidate"; break; fi
+  done
+fi
+if [ -z "$NODE" ]; then echo "paperclipai launcher: node not found; set PAPERCLIP_NODE" >&2; exit 1; fi
+export PATH="$(dirname "$NODE"):${PATH:-/usr/local/bin:/usr/bin:/bin}"
+exec "$NODE" "$REPO/cli/node_modules/tsx/dist/cli.mjs" "$REPO/cli/src/index.ts" "$@"
