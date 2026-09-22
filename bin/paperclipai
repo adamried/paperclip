@@ -2,6 +2,7 @@
 # Paperclip fork launcher: runs the CLI from this checkout's TypeScript source
 # via tsx, so `paperclipai run` serves the code currently in the working tree
 # (server/ and packages/ from their built dist/, the UI from ui/dist).
+# Rebuild after changing code:  pnpm build && paperclipai service restart
 # Register as a background service with:
 #   PAPERCLIP_SHIM_PATH="$PWD/bin/paperclipai" bin/paperclipai service install
 set -eu

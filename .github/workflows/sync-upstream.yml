@@ -1,0 +1,151 @@
+name: Sync upstream
+
+# Merge an upstream Paperclip release into this fork's `custom` branch while
+# keeping the fork's own commits. Run it from the Actions tab (or via the API)
+# whenever you decide to take an update. Nothing runs on a schedule.
+#
+# Outcomes:
+#   - already up to date: no changes, job succeeds.
+#   - clean merge: builds and runs the fork's own tests, then pushes `custom`.
+#   - conflict: pushes the upstream tag as a branch and opens a pull request
+#     into `custom` so the conflict can be resolved by hand once. Job fails so
+#     the caller can tell the difference.
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: "Upstream release tag to merge (blank = newest stable v* tag)"
+        required: false
+        default: ""
+      dry_run:
+        description: "Do everything except push or open a pull request"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+env:
+  FORK_BRANCH: custom
+  UPSTREAM_REPO: https://github.com/paperclipai/paperclip.git
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the fork branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.FORK_BRANCH }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream tags
+        run: |
+          git remote add upstream "$UPSTREAM_REPO"
+          git fetch --tags --no-write-fetch-head upstream
+
+      - name: Resolve upstream ref
+        id: resolve
+        env:
+          REQUESTED: ${{ inputs.upstream_ref }}
+        run: |
+          if [ -n "$REQUESTED" ]; then
+            ref="$REQUESTED"
+          else
+            ref="$(git tag -l 'v*' | grep -v nightly | sort -V | tail -1)"
+          fi
+          if ! git rev-parse -q --verify "refs/tags/$ref" >/dev/null; then
+            echo "::error::Upstream tag '$ref' not found"; exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          if git merge-base --is-ancestor "refs/tags/$ref" HEAD; then
+            echo "up_to_date=true" >> "$GITHUB_OUTPUT"
+            echo "### Already up to date with upstream $ref" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "up_to_date=false" >> "$GITHUB_OUTPUT"
+            echo "### Merging upstream $ref into $FORK_BRANCH" >> "$GITHUB_STEP_SUMMARY"
+            git log --oneline "HEAD..refs/tags/$ref" | wc -l | xargs -I{} echo "{} upstream commits to merge" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Merge upstream
+        id: merge
+        if: steps.resolve.outputs.up_to_date == 'false'
+        env:
+          REF: ${{ steps.resolve.outputs.ref }}
+        run: |
+          if git merge --no-ff --no-edit -m "chore: merge upstream $REF into $FORK_BRANCH" "refs/tags/$REF"; then
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+          else
+            git diff --name-only --diff-filter=U > /tmp/conflicts.txt
+            git merge --abort
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            { echo "### Merge conflict in:"; sed 's/^/- /' /tmp/conflicts.txt; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Open a pull request for manual conflict resolution
+        if: steps.merge.outputs.conflict == 'true' && !inputs.dry_run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ steps.resolve.outputs.ref }}
+        run: |
+          branch="upstream/$REF"
+          git push --force origin "refs/tags/$REF:refs/heads/$branch"
+          body="$(printf 'Merging upstream %s into `%s` conflicts in these files:\n\n%s\n\nResolve the conflicts on this pull request (web editor or locally), keep the fork'"'"'s changes where they still apply, then merge.\n' "$REF" "$FORK_BRANCH" "$(sed 's/^/- /' /tmp/conflicts.txt)")"
+          if ! gh pr view "$branch" --json number >/dev/null 2>&1; then
+            gh pr create --base "$FORK_BRANCH" --head "$branch" --title "Sync upstream $REF (conflicts to resolve)" --body "$body"
+          fi
+          echo "::error::Upstream $REF conflicts with $FORK_BRANCH; a pull request was opened for manual resolution"
+          exit 1
+
+      - name: Stop on conflict (dry run)
+        if: steps.merge.outputs.conflict == 'true' && inputs.dry_run
+        run: |
+          echo "::error::Dry run: upstream ${{ steps.resolve.outputs.ref }} conflicts with $FORK_BRANCH"
+          exit 1
+
+      - name: Set up Node
+        if: steps.merge.outputs.conflict == 'false'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Set up pnpm
+        if: steps.merge.outputs.conflict == 'false'
+        uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        if: steps.merge.outputs.conflict == 'false'
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        if: steps.merge.outputs.conflict == 'false'
+        run: pnpm build
+
+      - name: Run the fork's own tests
+        if: steps.merge.outputs.conflict == 'false'
+        run: >-
+          pnpm --filter @paperclipai/server exec vitest run
+          src/__tests__/claude-auth-merge.test.ts
+          src/__tests__/local-ai-credentials.test.ts
+
+      - name: Push merged branch
+        if: steps.merge.outputs.conflict == 'false' && !inputs.dry_run
+        run: |
+          git push origin "HEAD:$FORK_BRANCH"
+          echo "Pushed merge of upstream ${{ steps.resolve.outputs.ref }} to $FORK_BRANCH" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Dry run complete
+        if: steps.merge.outputs.conflict == 'false' && inputs.dry_run
+        run: echo "Dry run: merge, build and tests succeeded; nothing was pushed" >> "$GITHUB_STEP_SUMMARY"
