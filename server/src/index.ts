@@ -107,6 +107,7 @@ import { isLoopbackHost, rewriteLoopbackUrlPort } from "./url-utils.js";
 import { createPluginWorkerManager } from "./services/plugin-worker-manager.js";
 import { createStorageServiceFromConfig } from "./storage/index.js";
 import { printStartupBanner } from "./startup-banner.js";
+import { repairArchivedApplicationsWithLiveConnections } from "./services/ai-application-repair.js";
 import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-claim.js";
 import { maybePersistWorktreeRuntimePorts } from "./worktree-config.js";
 import { initTelemetry, getTelemetryClient } from "./telemetry.js";
@@ -1062,6 +1063,7 @@ async function startServerWithDatabaseTeardown(
       logger.error({ err }, "startup reconciliation of codex_local managed homes failed");
     });
 
+  void repairArchivedApplicationsWithLiveConnections(db as any);
   void reconcileBuiltInAgentsOnStartup(db as any)
     .then((result) => {
       if (
