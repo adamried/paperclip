@@ -1,8 +1,9 @@
 import { listOpenRouterModels } from "../services/openrouter-models.js";
 import { prepareManagedAiRuntime, assertManagedAiProjectAuth, stripAiAuthBindings } from "../services/ai-connection-runtime.js";
-import { ADAPTER_AUTH_MISSING_CHECK_CODE, AI_CONNECTION_CAPABILITIES, aiConnectionBindingSchema, type AiConnectionBinding } from "@paperclipai/shared";
+import { ADAPTER_AUTH_MISSING_CHECK_CODE, AI_CONNECTION_CAPABILITIES, aiConnectionBindingSchema, aiProviderSchema, type AiConnectionBinding } from "@paperclipai/shared";
 import { toolConnections } from "@paperclipai/db";
 import { aiConnectionService } from "../services/ai-connections.js";
+import { listGatewayModels, mergeGatewayModels } from "../services/ai-gateway-models.js";
 import { defaultAiConnectionForHire } from "../services/agent-ai-connection-default.js";
 import { assertAiConnectionCreateAccess, canInstallSharedAiConnectionForNewAgent, responsibleUserForAiRequest, validateAiApiKey } from "./ai-connections.js";
 import { isAiConnectionCompatible } from "@paperclipai/shared";
@@ -3224,6 +3225,20 @@ export function agentRoutes(
     const models = refresh
       ? await refreshAdapterModels(modelAdapterType)
       : await listAdapterModels(modelAdapterType);
+    // A connection routed through a gateway exposes the gateway's own model
+    // list, which is what that key can actually use.
+    const aiConnectionId = asNonEmptyString(req.query.aiConnectionId);
+    const aiProvider = asNonEmptyString(req.query.aiProvider);
+    if ((aiConnectionId || aiProvider) && req.actor.type === "board") {
+      const source = await aiConnectionService(db).gatewayModelSource(companyId, getActorInfo(req).actorId, {
+        ...(aiConnectionId ? { connectionId: aiConnectionId } : {}),
+        ...(aiProviderSchema.safeParse(aiProvider).success ? { provider: aiProviderSchema.parse(aiProvider) } : {}),
+      });
+      if (source) {
+        res.json(mergeGatewayModels(await listGatewayModels(source, { refresh }), models));
+        return;
+      }
+    }
     res.json(models);
   });
 

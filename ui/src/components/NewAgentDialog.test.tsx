@@ -160,7 +160,8 @@ it("offers only Claude, Codex, and OpenCode on Cloud, even with the runner enabl
     [...document.querySelectorAll<HTMLInputElement>('input[type="radio"]')].map(
       (input) => input.value,
     ),
-  ).toEqual(["claude_local", "codex_local", "opencode_local"]);
+  // Claude Code is offered as two tiles: subscription, and API key / gateway.
+  ).toEqual(["claude_local:subscription", "claude_local:api_key", "codex_local", "opencode_local"]);
   expect(document.body.textContent).not.toContain("CLI harness");
 });
 

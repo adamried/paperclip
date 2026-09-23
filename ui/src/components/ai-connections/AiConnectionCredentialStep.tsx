@@ -98,9 +98,10 @@ function SubscriptionConnectionStep({ companyId, provider, initialMethod, fixedM
 function ApiKeyConnectionStep({ companyId, provider, connectionId, name: initialName, ownership, agentIds, allAgents, onComplete, onCancel }: Props) {
   const [name, setName] = useState(initialName);
   const [apiKey, setApiKey] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
   const client = useQueryClient();
   const save = useMutation({
-    mutationFn: () => aiConnectionsApi.create(companyId, { provider, method: "api_key", name, ownership, agentIds, allAgents, connectionId, apiKey }),
+    mutationFn: () => aiConnectionsApi.create(companyId, { provider, method: "api_key", name, ownership, agentIds, allAgents, connectionId, apiKey, ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}) }),
     onSuccess: (result) => { void client.invalidateQueries({ queryKey: ["ai-connections", companyId] }); onComplete({ ...result, method: "api_key" }); },
     onSettled: () => setApiKey(""),
   });
@@ -108,6 +109,10 @@ function ApiKeyConnectionStep({ companyId, provider, connectionId, name: initial
     <label className="block space-y-2 text-sm">Connection name<Input value={name} onChange={(event) => setName(event.target.value)} disabled={Boolean(connectionId)} /></label>
     {save.error && <p role="alert" className="text-sm text-destructive">{save.error.message}</p>}
     <ProviderApiKeyCard providerName="OpenRouter" value={apiKey} onChange={setApiKey} onSubmit={() => save.mutate()} disabled={save.isPending} placeholder="Enter API key here" autoFocus />
+    {provider !== "openrouter" && <label className="block space-y-2 text-sm">Gateway base URL (optional)
+      <Input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://gateway.example.com" disabled={save.isPending} />
+      <span className="block text-xs text-muted-foreground">Route this key through a LiteLLM or corporate gateway instead of the vendor API. Leave empty to use the vendor API.</span>
+    </label>}
     <div className="flex justify-between gap-2"><Button variant="ghost" onClick={onCancel}>Cancel</Button><Button disabled={!name.trim() || !apiKey.trim() || save.isPending} onClick={() => save.mutate()}>{save.isPending ? "Connecting…" : "Connect"}</Button></div>
   </div>;
 }

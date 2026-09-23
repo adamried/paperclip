@@ -137,6 +137,7 @@ export async function validateAiApiKey(
   provider: AiProvider,
   key: string,
   request: typeof fetch = fetch,
+  baseUrl?: string,
 ) {
   const endpoints = {
     anthropic: "https://api.anthropic.com/v1/models?limit=1",
@@ -144,13 +145,19 @@ export async function validateAiApiKey(
     openrouter: "https://openrouter.ai/api/v1/key",
     xai: "https://api.x.ai/v1/models",
   };
+  // A gateway fronts the vendor API under its own host. Verify the key where
+  // it will be used; a gateway key is not valid at the vendor. Gateways differ
+  // in which auth header they read, so send both forms.
+  const gateway = baseUrl && provider !== "openrouter" ? baseUrl.replace(/\/+$/, "") : null;
+  const endpoint = gateway ? `${gateway}/v1/models${provider === "anthropic" ? "?limit=1" : ""}` : endpoints[provider];
   let response: Response;
   try {
-    response = await request(endpoints[provider], {
+    response = await request(endpoint, {
       redirect: "error",
       signal: AbortSignal.timeout(15000),
-      headers:
-        provider === "anthropic"
+      headers: gateway
+        ? { Authorization: `Bearer ${key}`, "x-api-key": key, "anthropic-version": "2023-06-01" }
+        : provider === "anthropic"
           ? { "x-api-key": key, "anthropic-version": "2023-06-01" }
           : { Authorization: `Bearer ${key}` },
     });
@@ -297,7 +304,7 @@ export function aiConnectionRoutes(db: Db, options: Parameters<typeof supportsLo
           "Use the existing provider sign-in flow to connect a subscription",
         );
       const attemptStartedAt = new Date();
-      await validateAiApiKey(input.provider, input.apiKey!);
+      await validateAiApiKey(input.provider, input.apiKey!, fetch, input.baseUrl);
       const result = await service.save(
         companyId,
         userId,

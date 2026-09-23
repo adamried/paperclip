@@ -22,7 +22,16 @@ export type AgentBasics = {
   name: string;
   adapterType: string;
   runnerProvider: string;
+  /** Claude Code only: which credential path the agent should be set up with. */
+  method?: "subscription" | "api_key";
 };
+// Claude Code is offered as two tiles so a subscription login and an API key
+// (optionally through a gateway) are distinct choices at creation time. Both
+// run the same adapter; the choice preselects the connection step.
+const CLAUDE_TILES = [
+  { method: "subscription" as const, label: "Claude Code · Subscription", description: "Sign in with a Claude subscription" },
+  { method: "api_key" as const, label: "Claude Code · API key / gateway", description: "Anthropic API key, optionally via a LiteLLM or corporate gateway" },
+];
 const brandMarks: Record<string, { src: string; dark?: string }> = {
   claude_local: { src: "/brands/claude-color.svg" },
   codex_local: { src: "/brands/codex-color.svg" },
@@ -102,6 +111,7 @@ export function AgentBasicsDialog({
   });
   const [name, setName] = useState("");
   const [adapterType, setAdapterType] = useState(initialAdapter);
+  const [method, setMethod] = useState<"subscription" | "api_key" | null>(null);
   const [runnerProvider, setRunnerProvider] = useState("codex");
   const [step, setStep] = useState<"name" | "adapter">("name");
   const {
@@ -161,7 +171,12 @@ export function AgentBasicsDialog({
             if (!name.trim()) return;
             if (step === "name") setStep("adapter");
             else if (validAdapter)
-              onContinue({ name: name.trim(), adapterType, runnerProvider });
+              onContinue({
+                name: name.trim(),
+                adapterType,
+                runnerProvider,
+                ...(adapterType === "claude_local" && method ? { method } : {}),
+              });
           }}
         >
           <div className="flex min-h-0 flex-col gap-7 overflow-y-auto px-6 pb-8 sm:px-10">
@@ -219,39 +234,45 @@ export function AgentBasicsDialog({
                   </p>
                 )}
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                  {choices.map((adapter) => {
+                  {choices.flatMap((adapter) => {
                     const display = getAdapterDisplay(adapter.type);
+                    const tiles = adapter.type === "claude_local"
+                      ? CLAUDE_TILES.map((tile) => ({ key: `${adapter.type}:${tile.method}`, method: tile.method as "subscription" | "api_key" | null, label: tile.label }))
+                      : [{ key: adapter.type, method: null, label: display.label }];
+                    return tiles.map((tile) => {
+                    const selected = adapterType === adapter.type && (tile.method === null || method === tile.method);
                     return (
                       <label
-                        key={adapter.type}
+                        key={tile.key}
                         className="relative cursor-pointer"
                       >
                         <input
                           type="radio"
                           name="new-agent-adapter"
-                          value={adapter.type}
-                          checked={adapterType === adapter.type}
-                          onChange={() => setAdapterType(adapter.type)}
+                          value={tile.key}
+                          checked={selected}
+                          onChange={() => { setAdapterType(adapter.type); setMethod(tile.method); }}
                           className="peer sr-only"
                         />
                         <span
                           className={cn(
                             "flex h-full flex-col items-center gap-2 rounded-lg border px-3 py-4 text-center peer-focus-visible:ring-2 peer-focus-visible:ring-ring hover:bg-accent/40",
-                            adapterType === adapter.type
+                            selected
                               ? "border-foreground/40 bg-accent"
                               : "border-border bg-card",
                           )}
                         >
                           <AdapterMark type={adapter.type} />
                           <span className="text-sm font-medium">
-                            {display.label}
+                            {tile.label}
                           </span>
-                          {adapterType === adapter.type && (
+                          {selected && (
                             <Check className="absolute right-2 top-2 size-3.5" />
                           )}
                         </span>
                       </label>
                     );
+                    });
                   })}
                 </div>
                 {validAdapter && adapterType === "paperclip_runner" && (

@@ -203,12 +203,15 @@ export const agentsApi = {
   adapterModels: (
     companyId: string,
     type: string,
-    options?: { refresh?: boolean; environmentId?: string | null; provider?: string },
+    options?: { refresh?: boolean; environmentId?: string | null; provider?: string; aiProvider?: string; aiConnectionId?: string },
   ) => {
     const params = new URLSearchParams();
     if (options?.refresh) params.set("refresh", "1");
     if (options?.provider) params.set("provider", options.provider);
     if (options?.environmentId) params.set("environmentId", options.environmentId);
+    // A gateway-routed connection contributes its own model list.
+    if (options?.aiConnectionId) params.set("aiConnectionId", options.aiConnectionId);
+    else if (options?.aiProvider) params.set("aiProvider", options.aiProvider);
     const query = params.size > 0 ? `?${params.toString()}` : "";
     return api.get<AdapterModel[]>(
       `/companies/${encodeURIComponent(companyId)}/adapters/${encodeURIComponent(type)}/models${query}`,

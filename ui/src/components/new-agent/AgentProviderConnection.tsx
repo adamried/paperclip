@@ -43,6 +43,7 @@ export function AgentProviderConnection({
   testConnection,
   testError,
   managedAccount,
+  preferredMethod,
 }: {
   companyId: string;
   adapterType: "claude_local" | "codex_local" | "grok_local";
@@ -53,6 +54,8 @@ export function AgentProviderConnection({
   onBack: () => void;
   testConnection: (connection: ProviderConnection) => Promise<boolean>;
   testError?: string | null;
+  /** New-agent flow: the auth method the user picked on the adapter tile. */
+  preferredMethod?: "subscription" | "api_key";
   /** Connections supplies its access intent; presentation and login controllers stay shared. */
   managedAccount?: {
     intent: AiConnectionLoginIntent;
@@ -78,7 +81,15 @@ export function AgentProviderConnection({
     setAuthorizationUrl(null);
     setLoginPhase("preparing");
   };
-  const [methodChoice, setMethod] = useState<"subscription" | "api" | null>(managedAccount?.initialMethod === "api_key" ? "api" : managedAccount ? "subscription" : null);
+  const [methodChoice, setMethod] = useState<"subscription" | "api" | null>(
+    managedAccount?.initialMethod === "api_key" ? "api"
+      : managedAccount ? "subscription"
+        : preferredMethod === "api_key" ? "api"
+          : preferredMethod === "subscription" ? "subscription"
+            : null,
+  );
+  // API-key connections may route through a gateway (LiteLLM, corporate proxy).
+  const [baseUrl, setBaseUrl] = useState("");
   const [opened, setOpened] = useState(false);
   const [authorizationUrl, setAuthorizationUrl] = useState<string | null>(null);
   const [loginPhase, setLoginPhase] = useState<"preparing" | "ready" | "waiting" | "connecting">("preparing");
@@ -147,7 +158,7 @@ export function AgentProviderConnection({
       if (managedAccount) {
         if (method === "subscription" && !canUseLocalLogin) return;
         const result = savedManagedAccount.current ?? await (method === "api"
-          ? aiConnectionsApi.create(companyId, { ...managedAccount.intent, method: "api_key", apiKey: apiKey.trim() })
+          ? aiConnectionsApi.create(companyId, { ...managedAccount.intent, method: "api_key", apiKey: apiKey.trim(), ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}) })
           : localLogin.connect(managedAccount.intent));
         savedManagedAccount.current = result;
         // Signing in here is an explicit choice of account for this agent, so
@@ -187,7 +198,7 @@ export function AgentProviderConnection({
         connection = { env: {}, aiConnection: { provider: aiProvider, method: "subscription", mode: "responsible_user" } };
       }
       if (connection.credentials) {
-        await aiConnectionsApi.create(companyId, { provider: aiProvider, method: "api_key", name: `My ${provider} API`, ownership: "personal", apiKey: connection.credentials[envKey], agentIds: [], allAgents: true });
+        await aiConnectionsApi.create(companyId, { provider: aiProvider, method: "api_key", name: `My ${provider} API`, ownership: "personal", apiKey: connection.credentials[envKey], agentIds: [], ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}), allAgents: true });
         connection = { env: {}, aiConnection: { provider: aiProvider, method: "api_key", mode: "responsible_user" } };
       }
       if (run !== epoch.current) return;
@@ -317,6 +328,16 @@ export function AgentProviderConnection({
                       setApiKey(value);
                       setStoredConnection(null);
                     }}
+                    onSubmit={() => void connect()}
+                    disabled={busy}
+                  />
+                )}
+                {!selectedKey && (
+                  <OnboardingCardField
+                    label="Gateway base URL (optional)"
+                    value={baseUrl}
+                    placeholder="https://gateway.example.com (leave empty for the vendor API)"
+                    onChange={(value) => { setBaseUrl(value); setStoredConnection(null); }}
                     onSubmit={() => void connect()}
                     disabled={busy}
                   />

@@ -64,7 +64,13 @@ export const aiConnectionBindingSchema = z.discriminatedUnion("mode", [
     .strict(),
 ]);
 export type AiConnectionBinding = z.infer<typeof aiConnectionBindingSchema>;
-export const aiConnectionMetadataSchema = z.object(requirement).strict();
+/** A gateway (LiteLLM, corporate proxy) that fronts the provider API for an API-key connection. */
+export const aiConnectionBaseUrlSchema = z
+  .string()
+  .trim()
+  .max(2048)
+  .refine((value) => /^https?:\/\/[^\s/]+/.test(value), "Enter an http(s) URL");
+export const aiConnectionMetadataSchema = z.object({ ...requirement, baseUrl: aiConnectionBaseUrlSchema.optional() }).strict();
 export type AiConnectionMetadata = z.infer<typeof aiConnectionMetadataSchema>;
 
 /** Existing integrations only. This table describes compatibility, never routing. */
@@ -164,6 +170,8 @@ export interface AiManagedConnectionSummary {
   method: AiAuthMethod;
   name: string;
   accountLabel?: string;
+  /** Present when an API-key connection routes through a gateway. */
+  baseUrl?: string;
   ownership: "personal" | "shared";
   ownerUserId?: string;
   ownerName?: string;
@@ -177,6 +185,8 @@ export const createAiConnectionSchema = z
     name: z.string().trim().min(1).max(160),
     ownership: z.enum(["personal", "shared"]),
     apiKey: z.string().trim().min(1).max(32768).optional(),
+    /** API-key connections only: route this key through a gateway instead of the vendor endpoint. */
+    baseUrl: aiConnectionBaseUrlSchema.optional(),
     loginSessionId: z.string().max(128).optional(),
     connectionId: z.string().uuid().optional(),
     agentIds: z.array(z.string().uuid()).max(1000).default([]),

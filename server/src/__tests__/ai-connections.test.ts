@@ -98,6 +98,21 @@ describe("managed AI connections", () => {
       expect(await readFile(path.join(env.CLAUDE_CONFIG_DIR, ".credentials.json"), "utf8")).toBe(document);
     } finally { await run.cleanup(); }
   });
+  it("routes an API-key connection created with a gateway URL through that gateway", async () => {
+    // Routing belongs to the credential: the connection carries the gateway,
+    // the runtime exports it next to the key, and the agent cannot override it.
+    const userId = "gateway-user";
+    await db.insert(companyMemberships).values({ companyId, principalId: userId, principalType: "user", status: "active", membershipRole: "member" });
+    await service.save(companyId, userId, { provider: "anthropic", method: "api_key", ownership: "personal", name: "Gateway", apiKey: "gw-key", baseUrl: "https://gateway.example.com/", allAgents: true, agentIds: [] }, "gw-key");
+    const run = await prepareManagedAiRuntime(db, { ...input, binding: { provider: "anthropic", method: "api_key", mode: "responsible_user" } as const, responsibleUserId: userId, config: { env: {} } });
+    try {
+      const env = run.config.env as Record<string, string>;
+      expect(env.ANTHROPIC_API_KEY).toBe("gw-key");
+      expect(env.ANTHROPIC_BASE_URL).toBe("https://gateway.example.com");
+    } finally { await run.cleanup(); }
+    const listed = await service.list(companyId, userId);
+    expect(listed.find((c) => c.name === "Gateway")?.baseUrl).toBe("https://gateway.example.com/");
+  });
   it("has one provider default across methods, retains unavailable defaults and honors explicit account methods", async () => {
     const userId = "provider-default-user";
     await db.insert(companyMemberships).values({ companyId, principalId: userId, principalType: "user", status: "active", membershipRole: "member" });

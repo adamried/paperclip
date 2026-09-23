@@ -7,6 +7,7 @@ import { and, eq } from "drizzle-orm";
 import { type Db, companySecrets, connectionGrants } from "@paperclipai/db";
 import {
   AI_CONNECTION_CAPABILITIES,
+  aiConnectionMetadataSchema,
   type AiConnectionBinding,
 } from "@paperclipai/shared";
 import { aiConnectionService } from "./ai-connections.js";
@@ -311,6 +312,16 @@ export async function prepareManagedAiRuntime(
       );
     if (subscriptionFile) await writeFile(authFile, value, { mode: 0o600 });
     else env[capability.envKey] = value;
+    // Routing belongs to the credential, never to the agent: an API-key
+    // connection created with a gateway URL is used through that gateway,
+    // and the agent-level base URL overrides rejected above stay rejected.
+    const metadata = aiConnectionMetadataSchema.safeParse(selection.connection.config.ai);
+    if (selection.attribution.method === "api_key" && metadata.success && metadata.data.baseUrl) {
+      const baseUrlKey = { anthropic: "ANTHROPIC_BASE_URL", openai: "OPENAI_BASE_URL", xai: "XAI_BASE_URL" }[
+        input.binding.provider as "anthropic" | "openai" | "xai"
+      ];
+      if (baseUrlKey) env[baseUrlKey] = metadata.data.baseUrl.replace(/\/+$/, "");
+    }
     if (
       input.binding.provider === "openai" &&
       selection.attribution.method === "api_key"

@@ -18,6 +18,7 @@ import {
   toolConnectionInstalls,
 } from "@paperclipai/db";
 import {
+  type AiProvider,
   AI_CONNECTION_CAPABILITIES,
   aiConnectionMetadataSchema,
   aiSubscriptionNeedsIsolatedLogin,
@@ -625,7 +626,14 @@ export function aiConnectionService(db: Db) {
             status: "active",
             healthStatus: "ok",
             healthMessage: null,
-            config: { ...reconnect.connection.config, aiIsolatedSubscription: input.method === "subscription" && input.provider !== "anthropic" },
+            config: {
+              ...reconnect.connection.config,
+              // A reconnect may move an API key to (or off) a gateway.
+              ...(input.method === "api_key" && "baseUrl" in input
+                ? { ai: { provider: input.provider, method: input.method, ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}) } }
+                : {}),
+              aiIsolatedSubscription: input.method === "subscription" && input.provider !== "anthropic",
+            },
             updatedAt: new Date(),
           })
           .where(eq(toolConnections.id, id));
@@ -648,7 +656,11 @@ export function aiConnectionService(db: Db) {
             healthStatus: "ok",
             config: {
               sourceTemplateKey: input.provider,
-              ai: { provider: input.provider, method: input.method },
+              ai: {
+                provider: input.provider,
+                method: input.method,
+                ...(input.method === "api_key" && "baseUrl" in input && input.baseUrl ? { baseUrl: input.baseUrl } : {}),
+              },
               aiIsolatedSubscription: input.method === "subscription" && input.provider !== "anthropic",
             },
             createdByUserId: userId,
@@ -775,5 +787,41 @@ export function aiConnectionService(db: Db) {
       return { connectionId: id, grantId };
     });
   }
-  return { list, select, credential, save, setDefault, membership };
+  /**
+   * The gateway a model picker should ask, for an explicit connection or for
+   * the user's provider default. Null when the connection is not an API-key
+   * connection routed through a gateway. Personal connections resolve only
+   * for their owner; shared ones for any member.
+   */
+  async function gatewayModelSource(
+    companyId: string,
+    userId: string,
+    input: { connectionId?: string; provider?: AiProvider },
+  ): Promise<{ connectionId: string; baseUrl: string; apiKey: string } | null> {
+    let grantId: string | undefined = undefined;
+    if (!input.connectionId && input.provider) {
+      const [row] = await db
+        .select({ grantId: aiProviderDefaults.grantId })
+        .from(aiProviderDefaults)
+        .where(and(
+          eq(aiProviderDefaults.companyId, companyId),
+          eq(aiProviderDefaults.userId, userId),
+          eq(aiProviderDefaults.provider, input.provider),
+        ))
+        .limit(1);
+      grantId = row?.grantId ?? undefined;
+      if (!grantId) return null;
+    }
+    const row = (await rows(companyId)).find((r) =>
+      input.connectionId
+        ? r.connection.id === input.connectionId && (r.grant.kind !== "user" || r.grant.subjectUserId === userId)
+        : r.grant.id === grantId,
+    );
+    if (!row || row.grant.status !== "active" || !row.connection.enabled) return null;
+    const metadata = aiConnectionMetadataSchema.safeParse(row.connection.config.ai);
+    if (!metadata.success || metadata.data.method !== "api_key" || !metadata.data.baseUrl) return null;
+    const apiKey = await credential(row as unknown as Awaited<ReturnType<typeof select>>);
+    return { connectionId: row.connection.id, baseUrl: metadata.data.baseUrl, apiKey };
+  }
+  return { list, select, credential, save, setDefault, membership, gatewayModelSource };
 }

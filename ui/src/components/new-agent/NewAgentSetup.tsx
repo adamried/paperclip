@@ -87,6 +87,7 @@ export function NewAgentSetup() {
       name={params.get("name") ?? ""}
       adapterType={params.get("adapterType") ?? ""}
       runnerProvider={params.get("runnerProvider") ?? "codex"}
+      method={params.get("method") === "api_key" ? "api_key" : params.get("method") === "subscription" ? "subscription" : undefined}
       createdAgentId={params.get("createdAgentId")}
     />
   );
@@ -97,12 +98,14 @@ function Setup({
   name,
   adapterType,
   runnerProvider,
+  method,
   createdAgentId,
 }: {
   companyId: string;
   name: string;
   adapterType: string;
   runnerProvider: string;
+  method?: "subscription" | "api_key";
   createdAgentId: string | null;
 }) {
   const navigate = useNavigate();
@@ -214,8 +217,11 @@ function Setup({
     queryFn: () => environmentsApi.capabilities(companyId),
   });
   const models = useQuery({
-    queryKey: queryKeys.agents.adapterModels(companyId, brandType, null, aiBinding?.provider),
-    queryFn: () => agentsApi.adapterModels(companyId, brandType, { provider: aiBinding?.provider }),
+    queryKey: queryKeys.agents.adapterModels(companyId, brandType, null, aiBinding?.provider, aiBinding && "connectionId" in aiBinding ? aiBinding.connectionId : aiBinding?.provider ?? null),
+    queryFn: () => agentsApi.adapterModels(companyId, brandType, {
+      provider: aiBinding?.provider,
+      ...(aiBinding && "connectionId" in aiBinding ? { aiConnectionId: aiBinding.connectionId } : aiBinding ? { aiProvider: aiBinding.provider } : {}),
+    }),
     enabled: Boolean(brandType) && showModel,
     retry: false,
   });
@@ -721,6 +727,7 @@ function Setup({
                       key={environmentId ?? "local"}
                       companyId={companyId}
                       adapterType={connectionAdapter}
+                      preferredMethod={method}
                       environmentId={environmentId}
                       canLogin={canLogin}
                       localEnvironment={environment?.driver === "local"}

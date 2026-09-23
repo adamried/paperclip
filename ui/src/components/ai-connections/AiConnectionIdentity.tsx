@@ -24,6 +24,7 @@ export function AiConnectionIdentity({
           {provider.name} ·{" "}
           {aiMethodLabel(connection.provider, connection.method)}
           {connection.accountLabel ? ` · ${connection.accountLabel}` : ""}
+          {connection.baseUrl ? ` · via ${gatewayHost(connection.baseUrl)}` : ""}
         </span>
         <span className="flex items-center gap-1 text-xs text-muted-foreground">
           <Icon aria-hidden className="size-3" />
@@ -34,4 +35,12 @@ export function AiConnectionIdentity({
       </div>
     </div>
   );
+}
+
+function gatewayHost(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return baseUrl;
+  }
 }
