@@ -18,7 +18,7 @@ import type {
   EnvSecretRefBinding,
   Environment,
 } from "@paperclipai/shared";
-import { AGENT_DEFAULT_MAX_CONCURRENT_RUNS, supportedEnvironmentDriversForAdapter, isValidBrowserCode, ADAPTER_AUTH_MISSING_CHECK_CODE } from "@paperclipai/shared";
+import { AGENT_DEFAULT_MAX_CONCURRENT_RUNS, AGENT_ROLES, AGENT_ROLE_LABELS, supportedEnvironmentDriversForAdapter, isValidBrowserCode, ADAPTER_AUTH_MISSING_CHECK_CODE } from "@paperclipai/shared";
 import type { AdapterModel } from "../api/agents";
 import { agentsApi } from "../api/agents";
 import { ApiError } from "../api/client";
@@ -60,6 +60,7 @@ import { environmentDisplayLabel } from "../lib/managed-sandbox-environment";
 import { extractModelName, extractProviderId } from "../lib/model-utils";
 import { queryKeys } from "../lib/queryKeys";
 import { useCompany } from "../context/CompanyContext";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Field,
   ToggleField,
@@ -1473,6 +1474,23 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                 className={inputClass}
                 placeholder="e.g. VP of Engineering"
               />
+            </Field>
+            <Field label="Role" hint={help.role}>
+              <Select
+                value={eff("identity", "role", props.agent.role)}
+                onValueChange={(value) => mark("identity", "role", value)}
+              >
+                <SelectTrigger aria-label="Role" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {AGENT_ROLES.map((role) => (
+                    <SelectItem key={role} value={role}>
+                      {AGENT_ROLE_LABELS[role]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </Field>
             <Field label="Reports to" hint={help.reportsTo}>
               <ReportsToPicker

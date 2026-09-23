@@ -19,7 +19,8 @@ import type {
   Agent,
   EnvBinding,
 } from "@paperclipai/shared";
-import { ADAPTER_AUTH_MISSING_CHECK_CODE } from "@paperclipai/shared";
+import { ADAPTER_AUTH_MISSING_CHECK_CODE, AGENT_ROLES, AGENT_ROLE_LABELS, type AgentRole } from "@paperclipai/shared";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useNavigate, useSearchParams } from "@/lib/router";
 import { agentsApi } from "@/api/agents";
 import { adaptersApi } from "@/api/adapters";
@@ -138,6 +139,8 @@ function Setup({
   const [effort, setEffort] = useState("");
   const [modelOpen, setModelOpen] = useState(false);
   const [environmentOverride, setEnvironmentOverride] = useState("");
+  // Empty means automatic: the company's first agent becomes the CEO, later hires are general.
+  const [role, setRole] = useState<AgentRole | "">("");
   const [provider, setProvider] = useState("openrouter");
   const [apiKey, setApiKey] = useState("");
   const [providerBinding, setProviderBinding] = useState<EnvBinding | null>(
@@ -497,7 +500,7 @@ function Setup({
       );
       const response = await agentsApi.hire(companyId, {
         name: name.trim(),
-        role: existing.length ? "general" : "ceo",
+        role: role || (existing.length ? "general" : "ceo"),
         ...(leader ? { reportsTo: leader.id } : {}),
         adapterType,
         adapterConfig: config,
@@ -1093,6 +1096,27 @@ function Setup({
                             </Field>
                           </div>
                         )}
+                      </section>
+                      <section className="space-y-5">
+                        <h3 className="text-sm font-semibold">Role</h3>
+                        <Select value={role || "auto"} onValueChange={(value) => setRole(value === "auto" ? "" : (value as AgentRole))}>
+                          <SelectTrigger aria-label="Role" className="w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="auto">
+                              Automatic: {(agents.data ?? []).length ? "General" : "Chief Executive (first agent)"}
+                            </SelectItem>
+                            {AGENT_ROLES.map((value) => (
+                              <SelectItem key={value} value={value}>
+                                {AGENT_ROLE_LABELS[value]}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          Only the CEO role changes behaviour: it may manage other agents' work and is the Board chat contact. Other roles label the org chart.
+                        </p>
                       </section>
                       {!["cursor_cloud", "hermes_gateway"].includes(
                         adapterType,
