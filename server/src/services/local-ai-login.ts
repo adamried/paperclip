@@ -9,8 +9,15 @@ import { notFound, unprocessable } from "../errors.js";
 import { aiConnectionService } from "./ai-connections.js";
 import { readVerifiedLocalAiCredential } from "./local-ai-credentials.js";
 import { logActivity } from "./activity-log.js";
+import { createAssistedLoginManager } from "./local-ai-login-assisted.js";
 
 const LOCAL_LOGIN_METHOD = "local_subscription";
+// One manager per process: assisted logins are child processes of this server.
+const assisted = createAssistedLoginManager();
+// Test suites and operators can keep the attempt terminal-only.
+function assistedLoginEnabled() {
+  return !process.env.VITEST && process.env.PAPERCLIP_ASSISTED_LOGIN !== "0";
+}
 const ATTEMPT_DURATION_MS = 30 * 60 * 1000;
 function loginHome(id: string) {
   return path.join(resolvePaperclipInstanceRoot(), "ai-local-logins", id);
@@ -20,6 +27,7 @@ function presentAttempt(id: string, expiresAt: Date, provider: string): LocalAiL
   const directory = loginHome(id);
   return {
     sessionId: id, expiresAt: expiresAt.toISOString(),
+    assisted: provider === "anthropic",
     command: provider === "openai"
       ? `(export CODEX_HOME=${shellQuote(directory)} && mkdir -p "$CODEX_HOME" && codex -c 'cli_auth_credentials_store="file"' login --device-auth)`
       : provider === "anthropic"
@@ -55,6 +63,7 @@ export function localAiLoginService(db: Db) {
         const [session] = await tx.select().from(adapterAuthSessions)
           .where(eq(adapterAuthSessions.id, row.id)).for("update");
         if (!session || !session.expiresAt || session.expiresAt.getTime() > Date.now()) return;
+        assisted.stop(row.id);
         await rm(loginHome(row.id), { recursive: true, force: true });
         await tx.update(adapterAuthSessions).set({
           status: session.connectionId ? "authenticated" : "timed_out",
@@ -68,7 +77,7 @@ export function localAiLoginService(db: Db) {
     if (intent.provider !== "openai" && intent.provider !== "xai" && intent.provider !== "anthropic")
       throw unprocessable("This provider does not use a separate local login home.");
     await reapExpired();
-    return db.transaction(async (tx) => {
+    const attempt = await db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`ai-local-login:${companyId}:${userId}:${intent.provider}`}, 0))`);
       const adapterType = intent.provider === "openai" ? "codex_local" : intent.provider === "anthropic" ? "claude_local" : "grok_local";
       const [existing] = await tx.select().from(adapterAuthSessions).where(and(
@@ -85,6 +94,7 @@ export function localAiLoginService(db: Db) {
         }
         if (!restart || existing.connectionMethod !== LOCAL_LOGIN_METHOD)
           throw unprocessable("Another sign-in is still open. Finish it, or choose Start sign-in again to replace a local attempt.");
+        assisted.stop(existing.id);
         await rm(loginHome(existing.id), { recursive: true, force: true });
         await tx.update(adapterAuthSessions).set({ status: "cancelled", finishedAt: new Date(), updatedAt: new Date() })
           .where(eq(adapterAuthSessions.id, existing.id));
@@ -120,6 +130,11 @@ export function localAiLoginService(db: Db) {
       }
       return presentAttempt(id, expiresAt, intent.provider);
     });
+    // Anthropic: run the isolated login on this host so the user never needs a
+    // terminal. Started after the row is committed; a restart of the server
+    // simply leaves the terminal command as the fallback.
+    if (intent.provider === "anthropic" && assistedLoginEnabled()) assisted.ensure(attempt.sessionId, loginHome(attempt.sessionId));
+    return attempt;
   }
 
   // Read-only credential detection: never saves a connection or refreshes another
@@ -139,11 +154,30 @@ export function localAiLoginService(db: Db) {
         return { status: "expired" };
       directory = loginHome(id);
     }
+    const assistedState = id ? assisted.snapshot(id) : null;
     try {
       await readVerifiedLocalAiCredential(intent.provider, directory);
-      return { status: "ready" };
+      // The CLI has stored the credential; its process is no longer needed.
+      if (id) assisted.stop(id);
+      return { status: "ready", assisted: assistedState };
     } catch {
-      return { status: "sign_in_required" };
+      return { status: "sign_in_required", assisted: assistedState };
+    }
+  }
+  /** Forward the browser code of an assisted sign-in to the CLI waiting on this attempt. */
+  async function submitCode(companyId: string, userId: string, id: string, code: string) {
+    const [session] = await db.select().from(adapterAuthSessions).where(and(
+      eq(adapterAuthSessions.id, id), eq(adapterAuthSessions.companyId, companyId),
+      eq(adapterAuthSessions.startedByUserId, userId),
+      eq(adapterAuthSessions.connectionMethod, LOCAL_LOGIN_METHOD),
+    ));
+    if (!session) throw notFound("Local sign-in attempt not found.");
+    if (session.status !== "waiting_for_user" || !session.expiresAt || session.expiresAt.getTime() <= Date.now())
+      throw unprocessable("This sign-in attempt has expired or was cancelled. Start sign-in again.");
+    try {
+      return assisted.submitCode(id, code);
+    } catch (error) {
+      throw unprocessable(error instanceof Error ? error.message : "The assisted sign-in is not running.");
     }
   }
 
@@ -176,6 +210,7 @@ export function localAiLoginService(db: Db) {
       return saved;
     });
     // Failed cleanup can be retried by the same completed attempt or reaper.
+    assisted.stop(id);
     await rm(loginHome(id), { recursive: true, force: true });
     return result;
   }
@@ -188,6 +223,7 @@ export function localAiLoginService(db: Db) {
         eq(adapterAuthSessions.connectionMethod, LOCAL_LOGIN_METHOD),
       )).for("update");
       if (!session) throw notFound("Local sign-in attempt not found.");
+      assisted.stop(id);
       await rm(loginHome(id), { recursive: true, force: true });
       if (!session.connectionId && session.status !== "cancelled") {
         await tx.update(adapterAuthSessions).set({
@@ -201,5 +237,5 @@ export function localAiLoginService(db: Db) {
       }
     });
   }
-  return { start, check, complete, cancel, reapExpired };
+  return { start, check, submitCode, complete, cancel, reapExpired };
 }

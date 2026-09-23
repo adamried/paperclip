@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { AiConnectionLoginIntent, LocalAiLoginAttempt, LocalAiLoginStatus } from "@paperclipai/shared";
+import type { AiConnectionLoginIntent, LocalAiLoginAssisted, LocalAiLoginAttempt, LocalAiLoginStatus } from "@paperclipai/shared";
 import { aiConnectionsApi } from "@/api/ai-connections";
 
 /** Every authentication host uses the same local credential check and login lifecycle. */
@@ -14,6 +14,9 @@ export function useLocalAiLogin(companyId: string | null, intent: AiConnectionLo
   const active = Boolean(companyId && enabled);
   const [attempt, setAttempt] = useState<LocalAiLoginAttempt | null>(null);
   const [status, setStatus] = useState<LocalAiLoginStatus["status"] | null>(null);
+  const [assisted, setAssisted] = useState<LocalAiLoginAssisted | null>(null);
+  const [submittingCode, setSubmittingCode] = useState(false);
+  const recheck = useRef<() => void>(() => {});
   const [error, setError] = useState<string | null>(null);
   const [generation, setGeneration] = useState(0);
   const latestIntent = useRef(intent);
@@ -33,6 +36,7 @@ export function useLocalAiLogin(companyId: string | null, intent: AiConnectionLo
     setAttempt(null);
     setError(null);
     setStatus(null);
+    setAssisted(null);
     if (!active || !companyId) return;
     let cancelled = false;
     let checking = false;
@@ -60,20 +64,24 @@ export function useLocalAiLogin(companyId: string | null, intent: AiConnectionLo
         });
         if (cancelled) return;
         setStatus(next.status);
+        setAssisted(next.assisted ?? null);
         setError(next.status === "expired" ? "This sign-in attempt expired. Start sign-in again." : null);
         // Stop polling a verified account. Focus still rechecks after a terminal
         // visit; awaiting terminal login never requires repeated Connect clicks.
-        if (next.status === "sign_in_required") timer = setTimeout(() => void check(), 5000);
+        // An assisted sign-in polls faster while the CLI is completing the code.
+        if (next.status === "sign_in_required") timer = setTimeout(() => void check(), next.assisted?.state === "completing" ? 1500 : 5000);
       } catch (cause) {
         if (!cancelled) setError(cause instanceof Error ? cause.message : "Could not check local sign-in.");
       } finally { checking = false; }
     }
     const onFocus = () => { if (!document.hidden) void check(); };
+    recheck.current = () => void check();
     void check();
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onFocus);
     return () => {
       cancelled = true;
+      recheck.current = () => {};
       clearTimeout(timer);
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onFocus);
@@ -84,6 +92,23 @@ export function useLocalAiLogin(companyId: string | null, intent: AiConnectionLo
   }, [companyId, active, isolated, target, generation]);
   return {
     isolated,
+    assisted: isolated ? assisted : null,
+    loginUrl: isolated ? assisted?.loginUrl ?? null : null,
+    submittingCode,
+    submitCode: async (code: string) => {
+      if (!companyId || !attempt) throw new Error("Prepare local sign-in before submitting a code.");
+      setSubmittingCode(true);
+      setError(null);
+      try {
+        const next = await aiConnectionsApi.submitLocalLoginCode(companyId, attempt.sessionId, code);
+        setAssisted(next ?? null);
+        recheck.current();
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "Could not submit the sign-in code.");
+      } finally {
+        setSubmittingCode(false);
+      }
+    },
     hostAllowed,
     usingHost: hostAllowed && useHost,
     setUseHost: (value: boolean) => {

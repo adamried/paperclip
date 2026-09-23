@@ -1,7 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { existsSync, openSync, closeSync } from "node:fs";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -15,6 +14,7 @@ import { resolvePaperclipInstanceId, resolvePaperclipInstanceRoot } from "../hom
 import { serverVersion } from "../version.js";
 import { conflict, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
+import { hostToolchainPath as toolchainPath } from "./host-toolchain-path.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -109,27 +109,6 @@ function pidAlive(pid: number): boolean {
   } catch {
     return false;
   }
-}
-
-/**
- * PATH for child processes. The service runs under launchd/systemd with a
- * minimal environment, so add the directories where node, pnpm (corepack),
- * cargo and gh usually live on a developer machine.
- */
-function toolchainPath(): string {
-  const home = os.homedir();
-  const extra = [
-    path.dirname(process.execPath),
-    path.join(home, ".local", "bin"),
-    "/opt/homebrew/opt/rustup/bin",
-    path.join(home, ".cargo", "bin"),
-    "/opt/homebrew/bin",
-    "/usr/local/bin",
-    "/usr/bin",
-    "/bin",
-  ];
-  const current = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean);
-  return [...new Set([...extra, ...current])].join(path.delimiter);
 }
 
 export function forkUpdateService(deps: { repoRoot?: string | null; fetchImpl?: typeof fetch } = {}) {

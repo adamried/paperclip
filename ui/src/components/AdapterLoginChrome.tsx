@@ -473,14 +473,21 @@ export function LocalProviderLoginInstructions({ adapterType, login }: {
     isolated?: boolean; command?: string; preparing: boolean; status?: "ready" | "sign_in_required" | "expired" | null; error: string | null; retry: () => void;
     /** Anthropic only: the machine's existing Claude login may be reused instead of a separate sign-in. */
     hostAllowed?: boolean; usingHost?: boolean; setUseHost?: (value: boolean) => void;
+    /** Assisted sign-in: the server runs the login and relays the browser code. */
+    assisted?: { state: "starting" | "awaiting_code" | "completing" | "exited"; loginUrl: string | null; exitCode: number | null; error: string | null } | null;
+    loginUrl?: string | null; submittingCode?: boolean; submitCode?: (code: string) => Promise<void>;
   };
 }) {
   const [showCommand, setShowCommand] = useState(false);
+  const [showTerminal, setShowTerminal] = useState(false);
+  const [code, setCode] = useState("");
   const provider = adapterType === "claude_local" ? "Claude Code" : adapterType === "grok_local" ? "Grok CLI" : "Codex CLI";
   const isolated = login?.isolated ?? (adapterType === "codex_local" || adapterType === "grok_local");
   const command = isolated ? login?.command : "claude auth login";
   if (login?.preparing) return <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Checking local {provider} sign-in…</p>;
   const ready = login?.status === "ready";
+  const assistedFailed = login?.assisted?.state === "exited" && (login.assisted.exitCode ?? 1) !== 0;
+  const assistedActive = Boolean(isolated && login?.submitCode && login.assisted && login.assisted.state !== "exited");
   const hostChoice = adapterType === "claude_local" && login?.hostAllowed && login.setUseHost
     ? (login.usingHost
       ? <p>Reusing this machine's existing Claude login. Its token cannot be refreshed and stops working after about 8 hours.{" "}
@@ -494,7 +501,38 @@ export function LocalProviderLoginInstructions({ adapterType, login }: {
       <p role="status" className="flex items-center gap-2 text-foreground"><Check className="size-4 shrink-0 text-(--status-task-icon-done)" />{provider} is signed in. Click Connect to use this account.</p>
       {!showCommand && <button type="button" className="underline underline-offset-4" onClick={() => setShowCommand(true)}>Use a different account</button>}
     </> : <p>{isolated ? `Sign in to ${provider} for this connection on the machine running Paperclip. Your existing terminal login stays separate.` : `Connect uses your local ${provider} account on the machine running Paperclip.`}</p>}
-    {(!ready || showCommand) && !login?.error && <>
+    {assistedActive && (!ready || showCommand) && !login?.error && <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span>1.</span>
+        {login?.loginUrl
+          ? <a className="inline-flex items-center gap-1 rounded-md border bg-background px-3 py-1.5 text-foreground underline-offset-4 hover:underline" href={login.loginUrl} target="_blank" rel="noreferrer">Open the {provider} sign-in</a>
+          : <span className="flex items-center gap-2"><Loader2 className="size-4 animate-spin" />Preparing the sign-in link…</span>}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <span>2.</span>
+        <span>Paste the code the browser shows after you sign in:</span>
+        <input
+          className="min-w-0 flex-1 rounded-md border bg-background px-2 py-1.5 font-mono text-xs text-foreground"
+          value={code}
+          onChange={(event) => setCode(event.target.value)}
+          placeholder="Code from the browser"
+          aria-label="Sign-in code"
+          disabled={login?.submittingCode || login?.assisted?.state === "completing"}
+        />
+        <button
+          type="button"
+          className="rounded-md border bg-background px-3 py-1.5 text-foreground disabled:opacity-60"
+          disabled={!code.trim() || login?.submittingCode || login?.assisted?.state === "completing" || !login?.loginUrl}
+          onClick={() => { const value = code; setCode(""); void login?.submitCode?.(value); }}
+        >
+          {login?.assisted?.state === "completing" ? "Completing…" : "Submit code"}
+        </button>
+      </div>
+      {login?.assisted?.state === "completing" && <p role="status" className="flex items-center gap-2"><Loader2 className="size-4 animate-spin" />Finishing sign-in…</p>}
+      <button type="button" className="underline underline-offset-4" onClick={() => setShowTerminal((value) => !value)}>{showTerminal ? "Hide the terminal command" : "Prefer a terminal? Show the command"}</button>
+    </div>}
+    {assistedFailed && !login?.error && <p role="alert">Sign-in did not complete{login?.assisted?.error ? `: ${login.assisted.error}` : ""}. Start sign-in again, or run the terminal command below.</p>}
+    {(!assistedActive || showTerminal || assistedFailed) && (!ready || showCommand) && !login?.error && <>
       <p>Run this in a terminal on that machine and finish signing in in your browser. We’ll check automatically when you return.</p>
       {command && <div className="flex min-w-0 max-w-full items-start gap-2 rounded-md border bg-muted p-3 text-foreground">
         <pre className="min-w-0 flex-1 whitespace-pre-wrap break-all font-mono text-xs"><code>{command}</code></pre>

@@ -219,14 +219,30 @@ export const localAiConnectionSchema = aiConnectionLoginIntentSchema.extend({
   localSessionId: z.string().uuid().optional(),
 });
 export const localAiLoginStartSchema = aiConnectionLoginIntentSchema.extend({ restart: z.boolean().optional() });
+/**
+ * Server-driven progress of an assisted isolated sign-in: Paperclip runs the
+ * provider's login command in the attempt's own home on the local host, shows
+ * the sign-in URL, and forwards the code the user pastes. Absent when the
+ * attempt is terminal-only.
+ */
+export interface LocalAiLoginAssisted {
+  state: "starting" | "awaiting_code" | "completing" | "exited";
+  loginUrl: string | null;
+  exitCode: number | null;
+  error: string | null;
+}
 export interface LocalAiLoginStatus {
   status: "ready" | "sign_in_required" | "expired";
+  assisted?: LocalAiLoginAssisted | null;
 }
 export interface LocalAiLoginAttempt {
   sessionId: string;
   command: string;
   expiresAt: string;
+  /** True when the server runs the login itself and the card can show a URL and a code box. */
+  assisted?: boolean;
 }
+export const localAiLoginCodeSchema = z.object({ code: z.string().trim().min(1).max(4096) });
 
 /** Preview-era copies of rotating local credentials must be reconnected. */
 export function aiSubscriptionNeedsIsolatedLogin(config: Record<string, unknown> | undefined): boolean {

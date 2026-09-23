@@ -16,7 +16,7 @@ import {
   createAiConnectionSchema,
   aiConnectionLoginIntentSchema,
   localAiConnectionSchema,
-  localAiLoginStartSchema,
+  localAiLoginStartSchema, localAiLoginCodeSchema,
   isAiConnectionCompatible,
   type AiConnectionLoginIntent,
   type AiProvider,
@@ -197,6 +197,14 @@ export function aiConnectionRoutes(db: Db, options: Parameters<typeof supportsLo
     const userId = await assertAiConnectionCreateAccess(db, req, companyId, intent);
     res.setHeader("Cache-Control", "no-store");
     res.json(await localLogin.check(companyId, userId, intent, localSessionId));
+  });
+  router.post("/companies/:companyId/ai-connections/local/attempts/:sessionId/code", validate(localAiLoginCodeSchema), async (req, res) => {
+    assertBoard(req);
+    assertCompanyAccess(req, req.params.companyId as string);
+    assertLocalLoginAvailable();
+    const id = z.string().uuid().parse(req.params.sessionId);
+    res.setHeader("Cache-Control", "no-store");
+    res.json(await localLogin.submitCode(req.params.companyId as string, getActorInfo(req).actorId, id, req.body.code));
   });
   router.delete("/companies/:companyId/ai-connections/local/attempts/:sessionId", async (req, res) => {
     assertBoard(req);
