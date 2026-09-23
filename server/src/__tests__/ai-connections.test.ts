@@ -107,8 +107,12 @@ describe("managed AI connections", () => {
     const run = await prepareManagedAiRuntime(db, { ...input, binding: { provider: "anthropic", method: "api_key", mode: "responsible_user" } as const, responsibleUserId: userId, config: { env: {} } });
     try {
       const env = run.config.env as Record<string, string>;
-      expect(env.ANTHROPIC_API_KEY).toBe("gw-key");
+      // A gateway wants `Authorization: Bearer`, which Claude Code sends only
+      // for ANTHROPIC_AUTH_TOKEN; ANTHROPIC_API_KEY would go out as x-api-key.
+      expect(env.ANTHROPIC_AUTH_TOKEN).toBe("gw-key");
+      expect(env.ANTHROPIC_API_KEY).toBe("");
       expect(env.ANTHROPIC_BASE_URL).toBe("https://gateway.example.com");
+      expect(env.CLAUDE_CODE_USE_BEDROCK).toBe("");
     } finally { await run.cleanup(); }
     const listed = await service.list(companyId, userId);
     expect(listed.find((c) => c.name === "Gateway")?.baseUrl).toBe("https://gateway.example.com/");

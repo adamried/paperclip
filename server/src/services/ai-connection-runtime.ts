@@ -321,6 +321,13 @@ export async function prepareManagedAiRuntime(
         input.binding.provider as "anthropic" | "openai" | "xai"
       ];
       if (baseUrlKey) env[baseUrlKey] = metadata.data.baseUrl.replace(/\/+$/, "");
+      // Claude Code sends ANTHROPIC_API_KEY as `x-api-key` but ANTHROPIC_AUTH_TOKEN
+      // as `Authorization: Bearer`, which is what gateways (LiteLLM, corporate
+      // proxies) expect. Hand a gateway-routed Anthropic key over as the token.
+      if (input.binding.provider === "anthropic") {
+        env.ANTHROPIC_AUTH_TOKEN = value;
+        env.ANTHROPIC_API_KEY = "";
+      }
     }
     if (
       input.binding.provider === "openai" &&
