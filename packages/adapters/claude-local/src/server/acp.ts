@@ -812,6 +812,16 @@ export async function testClaudeAcpEnvironment(
         "CLAUDE_CODE_OAUTH_TOKEN is set. Claude ACP will authenticate with the configured subscription token; no stored login is needed on the execution target.",
       detail: `Detected in ${source}.`,
     });
+  } else if (isNonEmpty(envConfig.ANTHROPIC_AUTH_TOKEN)) {
+    // A gateway-routed API-key connection hands the key over as a bearer
+    // token so Claude sends `Authorization: Bearer` to the gateway.
+    checks.push({
+      code: "claude_auth_token_configured",
+      level: "info",
+      message: isNonEmpty(envConfig.ANTHROPIC_BASE_URL)
+        ? `ANTHROPIC_AUTH_TOKEN is set. Claude ACP will authenticate with the configured bearer token through the gateway at ${envConfig.ANTHROPIC_BASE_URL}.`
+        : "ANTHROPIC_AUTH_TOKEN is set. Claude ACP will authenticate with the configured bearer token.",
+    });
   } else if (!targetIsRemote) {
     checks.push({
       code: "claude_acp_subscription_mode_possible",

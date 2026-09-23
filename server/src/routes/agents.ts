@@ -3306,10 +3306,16 @@ export function agentRoutes(
     // takes a real hello turn.
     if (resolvedMethod === "api_key") {
       const envKey = AI_CONNECTION_CAPABILITIES[binding.provider].methods.api_key?.envKey;
-      const key = envKey ? parseObject(context.config.env)[envKey] : undefined;
+      const runEnv = parseObject(context.config.env);
+      // A gateway-routed connection carries its base URL in the run env, and an
+      // Anthropic key routed that way travels as ANTHROPIC_AUTH_TOKEN (bearer)
+      // rather than ANTHROPIC_API_KEY. Verify where the run will actually go.
+      const baseUrlKey = ({ anthropic: "ANTHROPIC_BASE_URL", openai: "OPENAI_BASE_URL", xai: "XAI_BASE_URL" } as Record<string, string>)[binding.provider];
+      const gatewayUrl = baseUrlKey ? runEnv[baseUrlKey] : undefined;
+      const key = (envKey ? runEnv[envKey] : undefined) || (binding.provider === "anthropic" ? runEnv.ANTHROPIC_AUTH_TOKEN : undefined);
       try {
         if (typeof key !== "string" || !key) throw unprocessable("The selected account's API key was not available to verify.");
-        await validateAiApiKey(binding.provider, key);
+        await validateAiApiKey(binding.provider, key, fetch, typeof gatewayUrl === "string" && gatewayUrl ? gatewayUrl : undefined);
         result.checks.push({ code: "ai_connection_api_key_reverified", level: "info", message: "The provider verified this API key for adoption." });
       } catch (error) {
         result.status = "fail";
