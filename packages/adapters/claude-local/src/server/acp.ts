@@ -628,6 +628,11 @@ export async function probeClaudeAcpSandboxLogin(input: {
   }
 
   const args = ["--print", "-", "--output-format", "stream-json", "--verbose"];
+  // Probe with the agent's model. A run sets it too, and an account that
+  // cannot use that model fails the run with an access error; the probe must
+  // surface that here instead of passing on the default model.
+  const probeModel = asString(config.model, "").trim();
+  if (probeModel) args.push("--model", probeModel);
   if (config.managedAiConnection) args.push("--setting-sources", "user");
   args.push(
     ...buildClaudeProbePermissionArgs({
