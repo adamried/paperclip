@@ -22428,7 +22428,11 @@ export function heartbeatService(
           );
           if (stream === "stdout")
             stdoutExcerpt = appendExcerpt(stdoutExcerpt, sanitizedChunk);
-          if (stream === "stderr")
+          // The start-of-run timeout statement is informational; it goes to
+          // stderr only to keep the stdout event stream machine-parseable. Keep
+          // it out of the excerpt so a successful run does not present it as
+          // an error.
+          if (stream === "stderr" && !/^\[paperclip\] Adapter execution timeout:/.test(sanitizedChunk))
             stderrExcerpt = appendExcerpt(stderrExcerpt, sanitizedChunk);
           const ts = new Date().toISOString();
 

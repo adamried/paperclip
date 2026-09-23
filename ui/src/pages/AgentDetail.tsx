@@ -4416,9 +4416,13 @@ export function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType
           <div className="mb-2 text-xs font-medium text-muted-foreground">Events ({events.length})</div>
           <div className="bg-neutral-100 dark:bg-neutral-950 rounded-lg p-3 font-mono text-xs space-y-0.5">
             {events.map((evt) => {
+              // Paperclip's own run notices ride the stderr stream only to keep
+              // stdout machine-parseable; they are status, not errors.
+              const paperclipNotice = evt.stream === "stderr" && typeof evt.message === "string" && evt.message.startsWith("[paperclip] ");
+              const streamColor = evt.stream ? (paperclipNotice ? streamColors.system : streamColors[evt.stream]) : null;
               const color = evt.color
                 ?? (evt.level ? levelColors[evt.level] : null)
-                ?? (evt.stream ? streamColors[evt.stream] : null)
+                ?? streamColor
                 ?? "text-foreground";
 
               return (
@@ -4426,7 +4430,7 @@ export function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType
                   <span className="text-neutral-400 dark:text-neutral-600 shrink-0 select-none w-16">
                     {new Date(evt.createdAt).toLocaleTimeString("en-US", { hour12: false })}
                   </span>
-                  <span className={cn("shrink-0 w-14", evt.stream ? (streamColors[evt.stream] ?? "text-neutral-500") : "text-neutral-500")}>
+                  <span className={cn("shrink-0 w-14", streamColor ?? "text-neutral-500")}>
                     {evt.stream ? `[${evt.stream}]` : ""}
                   </span>
                   <span className={cn("break-all", color)}>
