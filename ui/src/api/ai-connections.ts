@@ -4,6 +4,7 @@ export const aiConnectionsApi = {
   startLocalLogin: (companyId: string, input: AiConnectionLoginIntent & { restart?: boolean }) => api.post<LocalAiLoginAttempt>(`/companies/${companyId}/ai-connections/local/attempts`, input),
   checkLocalLogin: (companyId: string, input: AiConnectionLoginIntent & { localSessionId?: string }) => api.post<LocalAiLoginStatus>(`/companies/${companyId}/ai-connections/local/check`, input),
   submitLocalLoginCode: (companyId: string, sessionId: string, code: string) => api.post<LocalAiLoginStatus["assisted"]>(`/companies/${companyId}/ai-connections/local/attempts/${sessionId}/code`, { code }),
+  importLocalLoginCredential: (companyId: string, sessionId: string, content: string) => api.post<LocalAiLoginStatus>(`/companies/${companyId}/ai-connections/local/attempts/${sessionId}/import`, { content }),
   cancelLocalLogin: (companyId: string, sessionId: string) => api.delete(`/companies/${companyId}/ai-connections/local/attempts/${sessionId}`),
   connectLocal: (companyId: string, input: AiConnectionLoginIntent & { localSessionId?: string }) => api.post<{ connectionId: string; grantId: string }>(`/companies/${companyId}/ai-connections/local`, input),
   activeRuns: (companyId: string, connectionId: string) => api.get<Array<{ id: string; agentId: string; agentName: string; status: string }>>(`/companies/${companyId}/ai-connections/${connectionId}/active-runs`),

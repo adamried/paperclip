@@ -10,6 +10,7 @@ import { aiConnectionService } from "./ai-connections.js";
 import { readVerifiedLocalAiCredential } from "./local-ai-credentials.js";
 import { logActivity } from "./activity-log.js";
 import { createAssistedLoginManager } from "./local-ai-login-assisted.js";
+import { describeImportedCredential } from "./local-ai-login-import.js";
 
 const LOCAL_LOGIN_METHOD = "local_subscription";
 // One manager per process: assisted logins are child processes of this server.
@@ -164,6 +165,42 @@ export function localAiLoginService(db: Db) {
       return { status: "sign_in_required", ...(assistedState ? { assisted: assistedState } : {}) };
     }
   }
+  /**
+   * Accept an existing CLI credential file in place of running the login:
+   * it is written into the attempt's isolated home exactly where the CLI
+   * would have written it, then verified with the same provider round-trip
+   * a terminal login gets. A failed verification removes the file again.
+   */
+  async function importCredential(companyId: string, userId: string, id: string, content: string): Promise<LocalAiLoginStatus> {
+    const [session] = await db.select().from(adapterAuthSessions).where(and(
+      eq(adapterAuthSessions.id, id), eq(adapterAuthSessions.companyId, companyId),
+      eq(adapterAuthSessions.startedByUserId, userId),
+      eq(adapterAuthSessions.connectionMethod, LOCAL_LOGIN_METHOD),
+    ));
+    if (!session?.aiConnection) throw notFound("Local sign-in attempt not found.");
+    if (session.status !== "waiting_for_user" || !session.expiresAt || session.expiresAt.getTime() <= Date.now())
+      throw unprocessable("This sign-in attempt has expired or was cancelled. Start sign-in again.");
+    const provider = session.aiConnection.provider;
+    let target;
+    try {
+      target = describeImportedCredential(provider, content);
+    } catch (error) {
+      throw unprocessable(error instanceof Error ? error.message : "The pasted credential is not usable.");
+    }
+    const directory = loginHome(id);
+    await prepareHome(id, provider);
+    const filePath = path.join(directory, target.filename);
+    await writeFile(filePath, content.trim(), { mode: 0o600 });
+    try {
+      await readVerifiedLocalAiCredential(provider, directory);
+    } catch {
+      await rm(filePath, { force: true });
+      throw unprocessable("The imported credential could not be verified with the provider. Check that it is current and complete, then try again.");
+    }
+    // A running assisted login is no longer needed.
+    assisted.stop(id);
+    return { status: "ready" };
+  }
   /** Forward the browser code of an assisted sign-in to the CLI waiting on this attempt. */
   async function submitCode(companyId: string, userId: string, id: string, code: string) {
     const [session] = await db.select().from(adapterAuthSessions).where(and(
@@ -237,5 +274,5 @@ export function localAiLoginService(db: Db) {
       }
     });
   }
-  return { start, check, submitCode, complete, cancel, reapExpired };
+  return { start, check, submitCode, importCredential, complete, cancel, reapExpired };
 }

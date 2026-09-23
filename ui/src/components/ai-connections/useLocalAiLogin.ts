@@ -16,6 +16,7 @@ export function useLocalAiLogin(companyId: string | null, intent: AiConnectionLo
   const [status, setStatus] = useState<LocalAiLoginStatus["status"] | null>(null);
   const [assisted, setAssisted] = useState<LocalAiLoginAssisted | null>(null);
   const [submittingCode, setSubmittingCode] = useState(false);
+  const [importing, setImporting] = useState(false);
   const recheck = useRef<() => void>(() => {});
   const [error, setError] = useState<string | null>(null);
   const [generation, setGeneration] = useState(0);
@@ -107,6 +108,22 @@ export function useLocalAiLogin(companyId: string | null, intent: AiConnectionLo
         setError(cause instanceof Error ? cause.message : "Could not submit the sign-in code.");
       } finally {
         setSubmittingCode(false);
+      }
+    },
+    importing,
+    importCredential: async (content: string) => {
+      if (!companyId || !attempt) throw new Error("Prepare local sign-in before importing a credential.");
+      setImporting(true);
+      setError(null);
+      try {
+        const next = await aiConnectionsApi.importLocalLoginCredential(companyId, attempt.sessionId, content);
+        setStatus(next.status);
+        setAssisted(next.assisted ?? null);
+        recheck.current();
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "Could not import the credential.");
+      } finally {
+        setImporting(false);
       }
     },
     hostAllowed,

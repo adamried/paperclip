@@ -476,11 +476,15 @@ export function LocalProviderLoginInstructions({ adapterType, login }: {
     /** Assisted sign-in: the server runs the login and relays the browser code. */
     assisted?: { state: "starting" | "awaiting_code" | "completing" | "exited"; loginUrl: string | null; exitCode: number | null; error: string | null } | null;
     loginUrl?: string | null; submittingCode?: boolean; submitCode?: (code: string) => Promise<void>;
+    /** Import an existing CLI credential file instead of signing in here. */
+    importing?: boolean; importCredential?: (content: string) => Promise<void>;
   };
 }) {
   const [showCommand, setShowCommand] = useState(false);
   const [showTerminal, setShowTerminal] = useState(false);
   const [code, setCode] = useState("");
+  const [showImport, setShowImport] = useState(false);
+  const [importText, setImportText] = useState("");
   const provider = adapterType === "claude_local" ? "Claude Code" : adapterType === "grok_local" ? "Grok CLI" : "Codex CLI";
   const isolated = login?.isolated ?? (adapterType === "codex_local" || adapterType === "grok_local");
   const command = isolated ? login?.command : "claude auth login";
@@ -541,6 +545,37 @@ export function LocalProviderLoginInstructions({ adapterType, login }: {
     </>}
     {login?.error && <p role="alert">{login.error}</p>}
     {login && !login.preparing && (isolated || login.error) && <button type="button" className="underline underline-offset-4" onClick={login.retry}>{isolated ? "Start sign-in again" : "Check again"}</button>}
+    {isolated && !ready && login?.importCredential && <div className="space-y-2">
+      <button type="button" className="underline underline-offset-4" onClick={() => setShowImport((value) => !value)}>
+        {showImport ? "Hide credential import" : "Sign-in blocked on this machine? Import a credential file instead"}
+      </button>
+      {showImport && <>
+        <p>
+          {adapterType === "codex_local"
+            ? <>Paste the contents of <code className="text-xs">~/.codex/auth.json</code> from a machine where <code className="text-xs">codex login</code> works. It is stored encrypted and refreshed here from then on.</>
+            : adapterType === "claude_local"
+              ? <>Paste the contents of <code className="text-xs">~/.claude/.credentials.json</code> from a machine where Claude Code is signed in. It is stored encrypted and refreshed here from then on.</>
+              : <>Paste the contents of the CLI's <code className="text-xs">auth.json</code> from a machine where its login works.</>}
+        </p>
+        <textarea
+          className="min-h-24 w-full rounded-md border bg-background p-2 font-mono text-xs text-foreground"
+          value={importText}
+          onChange={(event) => setImportText(event.target.value)}
+          placeholder='{"tokens": {...}}'
+          aria-label="Credential file contents"
+          spellCheck={false}
+          disabled={login.importing}
+        />
+        <button
+          type="button"
+          className="rounded-md border bg-background px-3 py-1.5 text-foreground disabled:opacity-60"
+          disabled={!importText.trim() || login.importing}
+          onClick={() => { const value = importText; setImportText(""); void login.importCredential?.(value); }}
+        >
+          {login.importing ? "Verifying…" : "Import credential"}
+        </button>
+      </>}
+    </div>}
     {hostChoice}
   </div>;
 }

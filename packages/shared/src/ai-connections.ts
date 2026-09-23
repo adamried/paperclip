@@ -243,6 +243,8 @@ export interface LocalAiLoginAttempt {
   assisted?: boolean;
 }
 export const localAiLoginCodeSchema = z.object({ code: z.string().trim().min(1).max(4096) });
+/** An existing CLI credential file pasted into the sign-in card (Codex auth.json, Claude .credentials.json, Grok auth.json). */
+export const localAiLoginImportSchema = z.object({ content: z.string().trim().min(2).max(64 * 1024) });
 
 /** Preview-era copies of rotating local credentials must be reconnected. */
 export function aiSubscriptionNeedsIsolatedLogin(config: Record<string, unknown> | undefined): boolean {
