@@ -150,6 +150,11 @@ export function AgentProviderConnection({
           ? aiConnectionsApi.create(companyId, { ...managedAccount.intent, method: "api_key", apiKey: apiKey.trim() })
           : localLogin.connect(managedAccount.intent));
         savedManagedAccount.current = result;
+        // Signing in here is an explicit choice of account for this agent, so
+        // make it the personal default the agent's binding resolves through.
+        // Defaults never move on their own; a stale default otherwise keeps
+        // winning until the user notices and changes it by hand.
+        try { await aiConnectionsApi.setDefault(companyId, result.grantId); } catch { /* best effort */ }
         setApiKey("");
         if (run === epoch.current) managedAccount.onComplete({ ...result, method: method === "api" ? "api_key" : "subscription" });
         return;
@@ -176,6 +181,9 @@ export function AgentProviderConnection({
             };
       if (method === "subscription" && canUseLocalLogin && !savedSubscription && !storedLogin.data) {
         savedManagedAccount.current ??= await localLogin.connect();
+        // Same reasoning as above: the account just signed in is the one the
+        // responsible-user binding should resolve to.
+        try { await aiConnectionsApi.setDefault(companyId, savedManagedAccount.current.grantId); } catch { /* best effort */ }
         connection = { env: {}, aiConnection: { provider: aiProvider, method: "subscription", mode: "responsible_user" } };
       }
       if (connection.credentials) {

@@ -159,9 +159,9 @@ export function localAiLoginService(db: Db) {
       await readVerifiedLocalAiCredential(intent.provider, directory);
       // The CLI has stored the credential; its process is no longer needed.
       if (id) assisted.stop(id);
-      return { status: "ready", assisted: assistedState };
+      return { status: "ready", ...(assistedState ? { assisted: assistedState } : {}) };
     } catch {
-      return { status: "sign_in_required", assisted: assistedState };
+      return { status: "sign_in_required", ...(assistedState ? { assisted: assistedState } : {}) };
     }
   }
   /** Forward the browser code of an assisted sign-in to the CLI waiting on this attempt. */

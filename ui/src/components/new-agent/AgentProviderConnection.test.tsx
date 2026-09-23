@@ -16,6 +16,7 @@ const managedApi = vi.hoisted(() => ({
   list: vi.fn(async () => ({ currentUserId: "user-1", connections: [] })),
   loginResult: vi.fn(async () => ({ connectionId: "login-account", grantId: "login-grant" })),
   connectLocal: vi.fn(async () => ({ connectionId: "local-account", grantId: "local-grant" })),
+  setDefault: vi.fn(async () => ({ ok: true })),
   startLocalLogin: vi.fn(async () => ({ sessionId: "local-attempt", command: "CODEX_HOME='/fixture/isolated-login' codex login", expiresAt: "2026-09-11T20:00:00Z" })),
   checkLocalLogin: vi.fn(async () => ({ status: "sign_in_required" as const })),
   cancelLocalLogin: vi.fn(async () => ({})),
@@ -175,28 +176,34 @@ describe("AgentProviderConnection reuse", () => {
     click("Connect");
     await vi.waitFor(() => expect(onComplete).toHaveBeenCalled());
     expect(managedApi.connectLocal).toHaveBeenCalledWith("c1", { ...intent, localSessionId: "local-attempt" });
+    // The account just signed in becomes the personal default the binding resolves through.
+    expect(managedApi.setDefault).toHaveBeenCalledWith("c1", "local-grant");
   });
   it.each(["claude_local", "codex_local"] as const)("connects a local subscription without a sandbox and supports retry: %s", async (adapterType) => {
     const onComplete = vi.fn();
     const intent = { provider: adapterType === "claude_local" ? "anthropic" as const : "openai" as const, method: "subscription" as const, name: "My account", ownership: "personal" as const, agentIds: [], allAgents: false };
+    // Both providers now default to the separate sign-in on a local instance;
+    // the Claude host-login shortcut is an explicit opt-in on the card.
+    const command = adapterType === "claude_local" ? "CLAUDE_CONFIG_DIR='/isolated/claude' claude auth login" : "CODEX_HOME='/isolated/codex' codex login --device-auth";
+    managedApi.startLocalLogin.mockResolvedValue({ sessionId: "local-attempt", command, expiresAt: "2099-01-01T00:00:00Z" });
     await mount(adapterType, false, false, false, false, false, { intent, onComplete }, true);
     openProvider();
     await vi.waitFor(() => expect(host.textContent).toContain(adapterType === "claude_local" ? "claude auth login" : "codex login"));
     expect(host.textContent).toContain("machine running Paperclip");
     expect(host.textContent).not.toContain("sandbox");
+    if (adapterType === "claude_local") expect(host.textContent).toContain("Use existing login");
     managedApi.connectLocal.mockRejectedValueOnce(new Error("Run local login and try again"));
     click("Connect");
     await vi.waitFor(() => expect(host.textContent).toContain("Run local login and try again"));
     expect(onComplete).not.toHaveBeenCalled();
-    if (adapterType === "codex_local") {
-      click("Start sign-in again");
-      await vi.waitFor(() => expect(host.textContent).not.toContain("Run local login and try again"));
-      await vi.waitFor(() => expect(managedApi.cancelLocalLogin).toHaveBeenCalledWith("c1", "local-attempt"));
-      await vi.waitFor(() => expect(host.textContent).toContain("codex login"));
-    }
+    click("Start sign-in again");
+    await vi.waitFor(() => expect(host.textContent).not.toContain("Run local login and try again"));
+    await vi.waitFor(() => expect(managedApi.cancelLocalLogin).toHaveBeenCalledWith("c1", "local-attempt"));
+    await vi.waitFor(() => expect(host.textContent).toContain(adapterType === "claude_local" ? "claude auth login" : "codex login"));
     click("Connect");
     await vi.waitFor(() => expect(onComplete).toHaveBeenCalledWith({ connectionId: "local-account", grantId: "local-grant", method: "subscription" }));
-    expect(managedApi.connectLocal).toHaveBeenCalledWith("c1", adapterType === "codex_local" ? { ...intent, localSessionId: "local-attempt" } : intent);
+    expect(managedApi.connectLocal).toHaveBeenCalledWith("c1", { ...intent, localSessionId: "local-attempt" });
+    expect(managedApi.setDefault).toHaveBeenCalledWith("c1", "local-grant");
     expect(mocks.loginPanel).not.toHaveBeenCalled();
   });
   it("leaves a completed local account saved when its host is cancelled", async () => {
