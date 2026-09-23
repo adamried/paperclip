@@ -90,6 +90,10 @@ export function AgentProviderConnection({
   );
   // API-key connections may route through a gateway (LiteLLM, corporate proxy).
   const [baseUrl, setBaseUrl] = useState("");
+  // A gateway key is normally a company resource: creating it company-shared
+  // lets this agent (and any other) be pinned to it explicitly instead of
+  // resolving through the responsible user's single per-provider default.
+  const [shareGateway, setShareGateway] = useState(true);
   const [opened, setOpened] = useState(false);
   const [authorizationUrl, setAuthorizationUrl] = useState<string | null>(null);
   const [loginPhase, setLoginPhase] = useState<"preparing" | "ready" | "waiting" | "connecting">("preparing");
@@ -198,8 +202,27 @@ export function AgentProviderConnection({
         connection = { env: {}, aiConnection: { provider: aiProvider, method: "subscription", mode: "responsible_user" } };
       }
       if (connection.credentials) {
-        await aiConnectionsApi.create(companyId, { provider: aiProvider, method: "api_key", name: `My ${provider} API`, ownership: "personal", apiKey: connection.credentials[envKey], agentIds: [], ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}), allAgents: true });
-        connection = { env: {}, aiConnection: { provider: aiProvider, method: "api_key", mode: "responsible_user" } };
+        const gateway = baseUrl.trim();
+        const shared = Boolean(gateway) && shareGateway;
+        const created = await aiConnectionsApi.create(companyId, {
+          provider: aiProvider,
+          method: "api_key",
+          name: gateway ? `${provider} via ${gatewayHostLabel(gateway)}` : `My ${provider} API`,
+          ownership: shared ? "shared" : "personal",
+          apiKey: connection.credentials[envKey],
+          agentIds: [],
+          allAgents: true,
+          ...(gateway ? { baseUrl: gateway } : {}),
+        });
+        if (shared) {
+          // Pin the agent to this connection. Routing and model discovery then
+          // follow the gateway regardless of the user's personal default.
+          connection = { env: {}, aiConnection: { provider: aiProvider, method: "api_key", mode: "shared", connectionId: created.connectionId, grantId: created.grantId } };
+        } else {
+          // A personal key just entered is the account this agent should use.
+          try { await aiConnectionsApi.setDefault(companyId, created.grantId); } catch { /* best effort */ }
+          connection = { env: {}, aiConnection: { provider: aiProvider, method: "api_key", mode: "responsible_user" } };
+        }
       }
       if (run !== epoch.current) return;
       if (method === "api") {
@@ -345,6 +368,12 @@ export function AgentProviderConnection({
                       onSubmit={() => void connect()}
                       disabled={busy}
                     />
+                    {baseUrl.trim() && (
+                      <label className="flex items-start gap-2 text-sm text-muted-foreground">
+                        <input type="checkbox" className="mt-1" checked={shareGateway} onChange={(event) => setShareGateway(event.target.checked)} disabled={busy} />
+                        <span>Share this gateway connection with the company and pin {"this agent"} to it. Unchecked: keep it personal and make it your default {provider} account.</span>
+                      </label>
+                    )}
                   </div>
                 )}
               </OnboardingLoginCard>
@@ -459,4 +488,12 @@ export function AgentProviderConnection({
       />
     </div>
   );
+}
+
+function gatewayHostLabel(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).host;
+  } catch {
+    return "gateway";
+  }
 }
