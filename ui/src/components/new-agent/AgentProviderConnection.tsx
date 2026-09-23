@@ -333,14 +333,19 @@ export function AgentProviderConnection({
                   />
                 )}
                 {!selectedKey && (
-                  <OnboardingCardField
-                    label="Gateway base URL (optional)"
-                    value={baseUrl}
-                    placeholder="https://gateway.example.com (leave empty for the vendor API)"
-                    onChange={(value) => { setBaseUrl(value); setStoredConnection(null); }}
-                    onSubmit={() => void connect()}
-                    disabled={busy}
-                  />
+                  <div className="mt-4 space-y-1.5">
+                    <p className="text-sm text-muted-foreground">
+                      Gateway base URL <span className="text-xs">(optional; leave empty for the vendor API)</span>
+                    </p>
+                    <OnboardingCardField
+                      label="Gateway base URL (optional)"
+                      value={baseUrl}
+                      placeholder="https://gateway.example.com"
+                      onChange={(value) => { setBaseUrl(value); setStoredConnection(null); }}
+                      onSubmit={() => void connect()}
+                      disabled={busy}
+                    />
+                  </div>
                 )}
               </OnboardingLoginCard>
             ) : needsLogin ? (
