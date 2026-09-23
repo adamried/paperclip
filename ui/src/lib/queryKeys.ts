@@ -617,6 +617,7 @@ export const queryKeys = {
     generalSettings: ["instance", "general-settings"] as const,
     experimentalSettings: ["instance", "experimental-settings"] as const,
     forkUpdate: ["instance", "fork-update"] as const,
+    runtimes: ["instance", "runtimes"] as const,
   },
   health: ["health"] as const,
   cloud: {

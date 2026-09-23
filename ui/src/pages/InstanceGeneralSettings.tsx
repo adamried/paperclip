@@ -12,6 +12,7 @@ import { healthApi } from "@/api/health";
 import { instanceSettingsApi } from "@/api/instanceSettings";
 import { ModeBadge } from "@/components/access/ModeBadge";
 import { ForkUpdateSection } from "@/components/ForkUpdateSection";
+import { RuntimeInventorySection } from "@/components/RuntimeInventorySection";
 import { Button } from "../components/ui/button";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { queryKeys } from "../lib/queryKeys";
@@ -124,6 +125,8 @@ export function InstanceGeneralSettings({ embedded = false }: { embedded?: boole
       )}
 
       <ForkUpdateSection />
+
+      <RuntimeInventorySection />
 
       {showDeploymentStatus && (
       <section>

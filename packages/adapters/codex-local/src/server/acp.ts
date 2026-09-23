@@ -38,6 +38,7 @@ import {
 } from "@paperclipai/adapter-utils/server-utils";
 import { createWorkspaceRestoreTeardown } from "@paperclipai/adapter-utils/workspace-restore-teardown";
 import { normalizeCodexModel } from "../index.js";
+import { resolveHostExecutable } from "@paperclipai/adapter-utils/host-executable";
 import { classifyCodexAuthRefreshFailure } from "./parse.js";
 import { copyBackCodexAuth } from "./codex-auth-copyback.js";
 import { buildCodexAuthInboundProvision } from "./codex-auth-merge-scripts.js";
@@ -118,7 +119,10 @@ function firstNonEmptyString(...values: unknown[]): string | undefined {
   return undefined;
 }
 
-export function buildCodexAcpConfig(config: Record<string, unknown>): Record<string, unknown> {
+export function buildCodexAcpConfig(
+  config: Record<string, unknown>,
+  options: { localTarget?: boolean; hostEnv?: Record<string, string | undefined> } = {},
+): Record<string, unknown> {
   const agentCommand = firstNonEmptyString(config.agentCommand, config.acpAgentCommand);
   const stateDir = firstNonEmptyString(config.stateDir, config.acpStateDir);
   const mode = firstNonEmptyString(config.mode, config.acpMode) ?? DEFAULT_ACP_ENGINE_MODE;
@@ -139,6 +143,15 @@ export function buildCodexAcpConfig(config: Record<string, unknown>): Record<str
   );
 
   const env = parseObject(config.env);
+  // On the host, launch the installed Codex CLI instead of the @openai/codex
+  // build bundled with codex-acp, so runs match the Test probe and the
+  // operator's terminal. An explicit CODEX_PATH (config or host env) wins; a
+  // remote target resolves its own binary in the sandbox.
+  const hostEnv = options.hostEnv ?? {};
+  const explicitCodexPath = firstNonEmptyString(env.CODEX_PATH, hostEnv.CODEX_PATH);
+  const hostCodex = options.localTarget && !explicitCodexPath
+    ? resolveHostExecutable(asString(config.command, "codex"), hostEnv.PATH ?? process.env.PATH)
+    : null;
   let networkAccess = env.PAPERCLIP_CODEX_ACP_NETWORK_ACCESS !== "false";
   const extraArgs = asStringArray(config.extraArgs);
   for (const arg of extraArgs.length > 0 ? extraArgs : asStringArray(config.args)) {
@@ -148,7 +161,7 @@ export function buildCodexAcpConfig(config: Record<string, unknown>): Record<str
 
   return {
     ...config,
-    env: { ...env, PAPERCLIP_CODEX_ACP_NETWORK_ACCESS: String(networkAccess) },
+    env: { ...env, PAPERCLIP_CODEX_ACP_NETWORK_ACCESS: String(networkAccess), ...(hostCodex ? { CODEX_PATH: hostCodex } : {}) },
     agent: "codex",
     mode,
     permissionMode,
@@ -334,9 +347,19 @@ export function createCodexAcpExecutor(options: CodexAcpExecutorOptions = {}): C
       currentExecutor = createAcpxEngineExecutor(withCodexAcpDefaults(options));
       executor = currentExecutor;
     }
+    const target = readAdapterExecutionTarget({
+      executionTarget: ctx.executionTarget,
+      legacyRemoteExecution: ctx.executionTransport?.remoteExecution,
+    });
+    const localTarget = target?.kind !== "remote";
+    const config = buildCodexAcpConfig(ctx.config, { localTarget, hostEnv: localTarget ? process.env : {} });
+    const codexPath = parseObject(config.env).CODEX_PATH;
+    if (typeof codexPath === "string" && codexPath) {
+      await ctx.onLog("stderr", `[paperclip] ACPX Codex runs use the host Codex at ${codexPath}.\n`);
+    }
     const result = await currentExecutor({
       ...ctx,
-      config: buildCodexAcpConfig(ctx.config),
+      config,
     });
     return withCodexAuthRefreshFailureClassification(result);
   };

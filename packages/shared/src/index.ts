@@ -2659,6 +2659,7 @@ export {
 export * from "./validators/skill-policy.js";
 export * from "./validators/provider-trace.js";
 export * from "./fork-update.js";
+export * from "./runtime-inventory.js";
 export {
   FEATURE_TIERS,
   INSTANCE_FEATURE_CATALOG,

@@ -574,6 +574,8 @@ const ACPX_INHERITED_PROVIDER_ENV_KEYS: Readonly<Record<string, ReadonlySet<stri
   codex: new Set([
     "OPENAI_API_KEY",
     "CODEX_API_KEY",
+    // Which Codex binary codex-acp launches; Paperclip points it at the host CLI.
+    "CODEX_PATH",
   ]),
   claude: new Set([
     "ANTHROPIC_API_KEY",
