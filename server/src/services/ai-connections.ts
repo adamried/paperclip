@@ -618,6 +618,15 @@ export function aiConnectionService(db: Db) {
           ),
         );
       if (!app) throw unprocessable("Could not find the provider application");
+      // Removing the last account archives the provider application. A new
+      // account must bring it back, or the connection saves fine but never
+      // appears under the provider on the Connectors page.
+      if (app.status === "archived") {
+        await tx
+          .update(toolApplications)
+          .set({ status: "active", archivedAt: null, updatedAt: new Date() })
+          .where(eq(toolApplications.id, app.id));
+      }
       if (reconnect)
         await tx
           .update(toolConnections)
