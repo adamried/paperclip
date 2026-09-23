@@ -1,3 +1,4 @@
+import { resolveHostClaudeExecutable } from "./claude-executable.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -122,9 +123,23 @@ function firstNonEmptyString(...values: unknown[]): string | undefined {
 export function buildClaudeAcpConfig(
   config: Record<string, unknown>,
   inheritedEnv: Record<string, unknown> = {},
+  options: { localTarget?: boolean } = {},
 ): Record<string, unknown> {
   const env = parseObject(config.env);
   const model = resolveClaudeModel(config.model, { ...inheritedEnv, ...env });
+  // On the host, launch the installed Claude Code CLI instead of the build
+  // bundled with the ACP server's SDK, so runs match the Test probe and the
+  // operator's terminal. An explicit CLAUDE_CODE_EXECUTABLE (config or host
+  // env) wins; a remote target resolves its own binary in the sandbox.
+  const explicitExecutable = firstNonEmptyString(env.CLAUDE_CODE_EXECUTABLE, inheritedEnv.CLAUDE_CODE_EXECUTABLE);
+  const hostExecutable = options.localTarget && !explicitExecutable
+    ? resolveHostClaudeExecutable(asString(config.command, "claude"), asString(inheritedEnv.PATH, process.env.PATH ?? ""))
+    : null;
+  const runEnv: Record<string, unknown> = {
+    ...env,
+    ...(model ? { ANTHROPIC_MODEL: model } : {}),
+    ...(hostExecutable ? { CLAUDE_CODE_EXECUTABLE: hostExecutable } : {}),
+  };
   const agentCommand = firstNonEmptyString(config.agentCommand, config.acpAgentCommand);
   const stateDir = firstNonEmptyString(config.stateDir, config.acpStateDir);
   const mode = firstNonEmptyString(config.mode, config.acpMode) ?? DEFAULT_ACP_ENGINE_MODE;
@@ -143,7 +158,7 @@ export function buildClaudeAcpConfig(
     ...config,
     model,
     // ACP reads ANTHROPIC_MODEL at startup; keep it aligned with CLI precedence.
-    ...(model ? { env: { ...env, ANTHROPIC_MODEL: model } } : {}),
+    ...(model || hostExecutable ? { env: runEnv } : {}),
     agent: "claude",
     mode,
     permissionMode,
@@ -368,9 +383,15 @@ export function createClaudeAcpExecutor(options: ClaudeAcpExecutorOptions = {}):
       executionTarget: ctx.executionTarget,
       legacyRemoteExecution: ctx.executionTransport?.remoteExecution,
     });
+    const localTarget = target?.kind !== "remote";
+    const config = buildClaudeAcpConfig(ctx.config, localTarget ? process.env : {}, { localTarget });
+    const executable = parseObject(config.env).CLAUDE_CODE_EXECUTABLE;
+    if (typeof executable === "string" && executable) {
+      await ctx.onLog("stderr", `[paperclip] ACPX Claude runs use the host Claude Code at ${executable}.\n`);
+    }
     const result = await currentExecutor({
       ...ctx,
-      config: buildClaudeAcpConfig(ctx.config, target?.kind === "remote" ? {} : process.env),
+      config,
     });
     return mapClaudeAcpAuthErrorCode(result);
   };

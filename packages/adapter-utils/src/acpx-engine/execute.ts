@@ -583,6 +583,9 @@ const ACPX_INHERITED_PROVIDER_ENV_KEYS: Readonly<Record<string, ReadonlySet<stri
     "ANTHROPIC_MODEL",
     "ANTHROPIC_SMALL_FAST_MODEL",
     "CLAUDE_CONFIG_DIR",
+    // Which Claude Code binary the ACP server launches. Paperclip points it at
+    // the host's installed CLI so runs and the Test probe use the same build.
+    "CLAUDE_CODE_EXECUTABLE",
     "CLAUDE_CODE_USE_BEDROCK",
     "ANTHROPIC_BEDROCK_BASE_URL",
     "AWS_BEARER_TOKEN_BEDROCK",
