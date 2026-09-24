@@ -1,5 +1,8 @@
 import type { AdapterModel } from "./types.js";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { models as codexFallbackModels } from "@paperclipai/adapter-codex-local";
+import { codexHomeDir } from "@paperclipai/adapter-codex-local/server";
 import { readConfigFile } from "../config-file.js";
 
 const OPENAI_MODELS_ENDPOINT = "https://api.openai.com/v1/models";
@@ -70,10 +73,46 @@ async function fetchOpenAiModels(apiKey: string): Promise<AdapterModel[]> {
   }
 }
 
+/**
+ * The model catalog the host Codex CLI last fetched from OpenAI, cached as
+ * `models_cache.json` in the Codex home. Runs use the host CLI, so this is the
+ * list of models that CLI can actually start, including ones newer than the
+ * static fallback. Only models Codex itself lists (`visibility: "list"`) are
+ * returned, in Codex's own priority order. A missing or unreadable cache
+ * yields an empty list; the static fallback still covers that case.
+ */
+export async function readHostCodexModelCatalog(homeDir: string = codexHomeDir()): Promise<AdapterModel[]> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(path.join(homeDir, "models_cache.json"), "utf8"));
+  } catch {
+    return [];
+  }
+  const entries = typeof parsed === "object" && parsed !== null && Array.isArray((parsed as { models?: unknown }).models)
+    ? ((parsed as { models: unknown[] }).models)
+    : [];
+  const listed: Array<{ id: string; label: string; priority: number }> = [];
+  for (const entry of entries) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const record = entry as { slug?: unknown; display_name?: unknown; visibility?: unknown; priority?: unknown };
+    if (typeof record.slug !== "string" || record.slug.trim().length === 0) continue;
+    if (record.visibility !== "list") continue;
+    listed.push({
+      id: record.slug.trim(),
+      label: typeof record.display_name === "string" && record.display_name.trim() ? record.display_name.trim() : record.slug.trim(),
+      priority: typeof record.priority === "number" && Number.isFinite(record.priority) ? record.priority : Number.MAX_SAFE_INTEGER,
+    });
+  }
+  listed.sort((a, b) => a.priority - b.priority);
+  return dedupeModels(listed.map(({ id, label }) => ({ id, label })));
+}
+
 async function loadCodexModels(options?: { forceRefresh?: boolean }): Promise<AdapterModel[]> {
   const forceRefresh = options?.forceRefresh === true;
   const apiKey = resolveOpenAiApiKey();
-  const fallback = dedupeModels(codexFallbackModels);
+  // The host CLI's catalog leads, in Codex's order; the static list fills in
+  // anything the catalog does not mention.
+  const fallback = dedupeModels([...(await readHostCodexModelCatalog()), ...codexFallbackModels]);
   if (!apiKey) return fallback;
 
   const now = Date.now();
@@ -84,7 +123,7 @@ async function loadCodexModels(options?: { forceRefresh?: boolean }): Promise<Ad
 
   const fetched = await fetchOpenAiModels(apiKey);
   if (fetched.length > 0) {
-    const merged = mergedWithFallback(fetched);
+    const merged = mergedWithFallback([...fetched, ...fallback]);
     cached = {
       keyFingerprint,
       expiresAt: now + OPENAI_MODELS_CACHE_TTL_MS,

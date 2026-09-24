@@ -6,7 +6,10 @@ import { models as cursorFallbackModels } from "@paperclipai/adapter-cursor-loca
 import { models as opencodeFallbackModels } from "@paperclipai/adapter-opencode-local";
 import { resetOpenCodeModelsCacheForTests } from "@paperclipai/adapter-opencode-local/server";
 import { listAdapterModels, listServerAdapters, refreshAdapterModels } from "../adapters/index.js";
-import { resetCodexModelsCacheForTests } from "../adapters/codex-models.js";
+import { readHostCodexModelCatalog, resetCodexModelsCacheForTests } from "../adapters/codex-models.js";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { resetCursorModelsCacheForTests, setCursorModelsRunnerForTests } from "../adapters/cursor-models.js";
 
 vi.mock("acpx/runtime", () => ({
@@ -17,7 +20,12 @@ vi.mock("acpx/runtime", () => ({
 }));
 
 describe("adapter model listing", () => {
-  beforeEach(() => {
+  let emptyCodexHome: string;
+  beforeEach(async () => {
+    // Point the Codex home at an empty directory so the host machine's own
+    // models_cache.json never leaks into the static-fallback expectations.
+    emptyCodexHome = await mkdtemp(path.join(os.tmpdir(), "paperclip-codex-home-"));
+    process.env.CODEX_HOME = emptyCodexHome;
     delete process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.ANTHROPIC_BASE_URL;
@@ -205,6 +213,33 @@ describe("adapter model listing", () => {
     expect(initial.some((model) => model.id === "gpt-5")).toBe(true);
     expect(refreshed.some((model) => model.id === "gpt-5.6-terra")).toBe(true);
     expect(refreshed.some((model) => model.id === "gpt-5.6-luna")).toBe(true);
+  });
+
+  it("lists the host Codex CLI's cached catalog ahead of the static list, hiding unlisted models", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "paperclip-codex-home-"));
+    await writeFile(path.join(home, "models_cache.json"), JSON.stringify({
+      fetched_at: "2026-09-24T22:33:54Z",
+      models: [
+        { slug: "gpt-6-sol", display_name: "GPT-6-Sol", visibility: "list", priority: 2 },
+        { slug: "gpt-6-astra", display_name: "GPT-6-Astra", visibility: "list", priority: 1 },
+        { slug: "codex-auto-review", display_name: "Codex Auto Review", visibility: "hide", priority: 43 },
+        { slug: "gpt-7-nova", visibility: "list", priority: 0 },
+        { slug: "", visibility: "list" },
+      ],
+    }));
+    expect(await readHostCodexModelCatalog(home)).toEqual([
+      { id: "gpt-7-nova", label: "gpt-7-nova" },
+      { id: "gpt-6-astra", label: "GPT-6-Astra" },
+      { id: "gpt-6-sol", label: "GPT-6-Sol" },
+    ]);
+    expect(await readHostCodexModelCatalog(emptyCodexHome)).toEqual([]);
+
+    process.env.CODEX_HOME = home;
+    const models = await listAdapterModels("codex_local");
+    expect(models.slice(0, 3).map((model) => model.id)).toEqual(["gpt-7-nova", "gpt-6-astra", "gpt-6-sol"]);
+    expect(models.some((model) => model.id === "codex-auto-review")).toBe(false);
+    expect(models.filter((model) => model.id === "gpt-6-sol")).toHaveLength(1);
+    expect(models.some((model) => model.id === "codex-mini-latest")).toBe(true);
   });
 
   it("falls back to static codex models when OpenAI model discovery fails", async () => {
