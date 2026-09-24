@@ -1128,7 +1128,7 @@ function Setup({
                           </SelectContent>
                         </Select>
                         <p className="text-xs text-muted-foreground">
-                          Only the CEO role changes behaviour: it may manage other agents' work and is the Board chat contact. Other roles label the org chart.
+                          Each role seeds its own default instructions (a role brief and persona) that you can edit after hiring. The CEO additionally may manage other agents' work and is the Board chat contact.
                         </p>
                       </section>
                       {!["cursor_cloud", "hermes_gateway"].includes(

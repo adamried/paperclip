@@ -2914,7 +2914,7 @@ export function agentRoutes(
     adapterType: string,
     boardOnboardingFirstAgent = false,
   ): AgentDesiredSkillEntry[] | undefined {
-    if (role !== "ceo" && !boardOnboardingFirstAgent) return undefined;
+    if (role !== "ceo" && role !== "chief_of_staff" && !boardOnboardingFirstAgent) return undefined;
     const adapter = findActiveServerAdapter(adapterType);
     if (!adapter?.listSkills && !adapter?.syncSkills) return undefined;
     return PAPERCLIP_CORE_SKILL_KEYS

@@ -45,6 +45,7 @@ export type AgentAdapterType = (typeof AGENT_ADAPTER_TYPES)[number] | (string & 
 
 export const AGENT_ROLES = [
   "ceo",
+  "chief_of_staff",
   "cto",
   "cmo",
   "cfo",
@@ -61,6 +62,7 @@ export type AgentRole = (typeof AGENT_ROLES)[number];
 
 export const AGENT_ROLE_LABELS: Record<AgentRole, string> = {
   ceo: "CEO",
+  chief_of_staff: "Chief of Staff",
   cto: "CTO",
   cmo: "CMO",
   cfo: "CFO",
@@ -73,6 +75,34 @@ export const AGENT_ROLE_LABELS: Record<AgentRole, string> = {
   researcher: "Researcher",
   general: "General",
 };
+
+/**
+ * The default managed-instructions bundle each role seeds at hire time, and
+ * loads again on request when an agent changes role. Every role except
+ * `general` has its own files under `server/src/onboarding-assets/<role>/`;
+ * `general` uses the shared execution contract in `default/`.
+ */
+export const AGENT_ROLE_INSTRUCTION_FILES: Record<AgentRole, readonly string[]> = {
+  ceo: ["AGENTS.md", "HEARTBEAT.md", "SOUL.md", "TOOLS.md"],
+  chief_of_staff: ["AGENTS.md", "HEARTBEAT.md", "SOUL.md"],
+  cto: ["AGENTS.md", "SOUL.md"],
+  cmo: ["AGENTS.md", "SOUL.md"],
+  cfo: ["AGENTS.md", "SOUL.md"],
+  security: ["AGENTS.md", "SOUL.md"],
+  engineer: ["AGENTS.md", "SOUL.md"],
+  designer: ["AGENTS.md", "SOUL.md"],
+  pm: ["AGENTS.md", "SOUL.md"],
+  qa: ["AGENTS.md", "SOUL.md"],
+  devops: ["AGENTS.md", "SOUL.md"],
+  researcher: ["AGENTS.md", "SOUL.md"],
+  general: ["AGENTS.md"],
+};
+
+/** The bundle directory a role's default instructions are read from. */
+export function agentRoleInstructionBundle(role: string): AgentRole | "default" {
+  if (role === "general") return "default";
+  return Object.prototype.hasOwnProperty.call(AGENT_ROLE_INSTRUCTION_FILES, role) ? (role as AgentRole) : "default";
+}
 
 export const AGENT_DEFAULT_MAX_CONCURRENT_RUNS = 20;
 export const WORKSPACE_BRANCH_ROUTINE_VARIABLE = "workspaceBranch";

@@ -1,20 +1,19 @@
 import fs from "node:fs/promises";
+import { AGENT_ROLE_INSTRUCTION_FILES, agentRoleInstructionBundle, type AgentRole } from "@paperclipai/shared";
 
-const DEFAULT_AGENT_BUNDLE_FILES = {
-  default: ["AGENTS.md"],
-  ceo: ["AGENTS.md", "HEARTBEAT.md", "SOUL.md", "TOOLS.md"],
-} as const;
+export type DefaultAgentBundleRole = AgentRole | "default";
 
-type DefaultAgentBundleRole = keyof typeof DEFAULT_AGENT_BUNDLE_FILES;
+function bundleFileNames(role: DefaultAgentBundleRole): readonly string[] {
+  return role === "default" ? AGENT_ROLE_INSTRUCTION_FILES.general : AGENT_ROLE_INSTRUCTION_FILES[role];
+}
 
 function resolveDefaultAgentBundleUrl(role: DefaultAgentBundleRole, fileName: string) {
   return new URL(`../onboarding-assets/${role}/${fileName}`, import.meta.url);
 }
 
 export async function loadDefaultAgentInstructionsBundle(role: DefaultAgentBundleRole): Promise<Record<string, string>> {
-  const fileNames = DEFAULT_AGENT_BUNDLE_FILES[role];
   const entries = await Promise.all(
-    fileNames.map(async (fileName) => {
+    bundleFileNames(role).map(async (fileName) => {
       const content = await fs.readFile(resolveDefaultAgentBundleUrl(role, fileName), "utf8");
       return [fileName, content] as const;
     }),
@@ -23,5 +22,5 @@ export async function loadDefaultAgentInstructionsBundle(role: DefaultAgentBundl
 }
 
 export function resolveDefaultAgentInstructionsBundleRole(role: string): DefaultAgentBundleRole {
-  return role === "ceo" ? "ceo" : "default";
+  return agentRoleInstructionBundle(role);
 }
