@@ -5180,6 +5180,12 @@ export function agentRoutes(
     // from the patch so it never reaches the update values.
     const applyStoredClaudeLogin = patchData.applyStoredClaudeLogin === true;
     delete patchData.applyStoredClaudeLogin;
+    // Load the (new) role's default instruction bundle, replacing the managed
+    // instructions folder. Only ever on request: a role change alone never
+    // touches instructions, so edits are not lost silently.
+    const applyRoleInstructions = patchData.applyRoleInstructions === true;
+    delete patchData.applyRoleInstructions;
+    if (applyRoleInstructions) await assertCanManageInstructionsPath(req, existing);
     if (hasOwn(patchData, "adapterConfig")) {
       const adapterConfig = asRecord(patchData.adapterConfig);
       if (!adapterConfig) {
@@ -5337,7 +5343,7 @@ export function agentRoutes(
     }
 
     const actor = getActorInfo(req);
-    const agent = await svc.update(id, patchData, {
+    let agent = await svc.update(id, patchData, {
       recordRevision: {
         createdByAgentId: actor.agentId,
         createdByUserId: actor.actorType === "user" ? actor.actorId : null,
@@ -5354,6 +5360,18 @@ export function agentRoutes(
     if (!agent) {
       res.status(404).json({ error: "Agent not found" });
       return;
+    }
+    if (applyRoleInstructions && adapterSupportsInstructionsBundle(agent.adapterType)) {
+      const files = await loadDefaultAgentInstructionsBundle(resolveDefaultAgentInstructionsBundleRole(agent.role));
+      const materialized = await instructions.materializeManagedBundle(agent, files, {
+        entryFile: "AGENTS.md",
+        replaceExisting: true,
+        clearLegacyPromptTemplate: true,
+      });
+      const withBundle = await svc.update(agent.id, { adapterConfig: materialized.adapterConfig }, {
+        allowPendingApprovalConfigUpdate: true,
+      });
+      if (withBundle) agent = withBundle;
     }
 
     await logActivity(db, {

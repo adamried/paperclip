@@ -1502,6 +1502,32 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                   ))}
                 </SelectContent>
               </Select>
+              {(() => {
+                // Only the CEO role has its own instruction bundle; every other
+                // role shares the generic one. Offer to load the new role's
+                // bundle when the change crosses that line.
+                const nextRole = eff("identity", "role", props.agent.role);
+                const bundleOf = (role: string) => (role === "ceo" ? "ceo" : "default");
+                if (nextRole === props.agent.role || bundleOf(nextRole) === bundleOf(props.agent.role)) return null;
+                const apply = eff<boolean>("identity", "applyRoleInstructions", false) === true;
+                return (
+                  <label className="mt-2 flex items-start gap-2 text-sm text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={apply}
+                      onChange={(event) => mark("identity", "applyRoleInstructions", event.target.checked ? true : undefined)}
+                    />
+                    <span>
+                      Also load the default instructions for this role when saving.{" "}
+                      {bundleOf(nextRole) === "ceo"
+                        ? "Replaces AGENTS.md and adds HEARTBEAT.md, SOUL.md and TOOLS.md."
+                        : "Replaces the instructions folder with the standard AGENTS.md."}{" "}
+                      Current instruction edits are discarded.
+                    </span>
+                  </label>
+                );
+              })()}
             </Field>
             <Field label="Reports to" hint={help.reportsTo}>
               <ReportsToPicker
