@@ -4,7 +4,7 @@ import { issueRecoveryActionService } from "../services/issue-recovery-actions.j
 import * as localCredentials from "../services/local-ai-credentials.js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, access, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, access, readFile, readlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { and, eq, sql } from "drizzle-orm";
@@ -12,7 +12,7 @@ import { createDb, companies, agents, heartbeatRuns, companyMemberships, connect
 import { startEmbeddedPostgresTestDatabase } from "@paperclipai/db/test-embedded-postgres";
 import { aiConnectionService } from "../services/ai-connections.js";
 import * as executionTarget from "@paperclipai/adapter-utils/execution-target";
-import { prepareManagedAiRuntime, assertManagedAiProjectAuth } from "../services/ai-connection-runtime.js";
+import { prepareManagedAiRuntime, assertManagedAiProjectAuth, linkHostKeychainIntoHome } from "../services/ai-connection-runtime.js";
 import { toolAccessService } from "../services/tool-access.js";
 import { secretService } from "../services/secrets.js";
 import { aiConnectionBindingSchema, connectionPurposeTransportSchema, isAiConnectionCompatible } from "@paperclipai/shared";
@@ -96,7 +96,26 @@ describe("managed AI connections", () => {
       const env = run.config.env as Record<string, string>;
       expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe("");
       expect(await readFile(path.join(env.CLAUDE_CONFIG_DIR, ".credentials.json"), "utf8")).toBe(document);
+      if (process.platform === "darwin") {
+        // macOS finds the login keychain through HOME; the run home must
+        // expose the host's keychain or Claude Code refuses to start.
+        expect(await readlink(path.join(env.HOME, "Library", "Keychains"))).toBe(path.join(os.homedir(), "Library", "Keychains"));
+      }
     } finally { await run.cleanup(); }
+    await expect(access(path.join(os.homedir(), "Library", "Keychains"))).resolves.toBeUndefined();
+  });
+  it("links the host keychain into a run home only on macOS and never removes the target on cleanup", async () => {
+    const hostHome = await mkdtemp(path.join(os.tmpdir(), "paperclip-host-home-"));
+    await mkdir(path.join(hostHome, "Library", "Keychains"), { recursive: true });
+    await writeFile(path.join(hostHome, "Library", "Keychains", "login.keychain-db"), "fixture");
+    const runHome = await mkdtemp(path.join(os.tmpdir(), "paperclip-run-home-"));
+    await linkHostKeychainIntoHome(runHome, hostHome, "linux");
+    await expect(access(path.join(runHome, "Library"))).rejects.toThrow();
+    await linkHostKeychainIntoHome(runHome, hostHome, "darwin");
+    expect(await readlink(path.join(runHome, "Library", "Keychains"))).toBe(path.join(hostHome, "Library", "Keychains"));
+    await rm(runHome, { recursive: true, force: true });
+    expect(await readFile(path.join(hostHome, "Library", "Keychains", "login.keychain-db"), "utf8")).toBe("fixture");
+    await rm(hostHome, { recursive: true, force: true });
   });
   it("routes an API-key connection created with a gateway URL through that gateway", async () => {
     // Routing belongs to the credential: the connection carries the gateway,

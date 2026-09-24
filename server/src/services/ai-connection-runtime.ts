@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { HttpError, unprocessable } from "../errors.js";
-import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { and, eq } from "drizzle-orm";
@@ -20,6 +20,37 @@ import {
   readIsolatedClaudeKeychainDocument,
   deleteIsolatedClaudeKeychainItem,
 } from "@paperclipai/adapter-claude-local/server";
+
+/**
+ * On macOS the `security` tool locates the login keychain through HOME
+ * (`~/Library/Keychains` and `~/Library/Preferences/com.apple.security.plist`),
+ * so a process started with the throwaway run home sees no login keychain at
+ * all. Claude Code keeps its per-config-dir credential item and the account's
+ * device key there and refuses to run without one ("this account has no login
+ * keychain"). Link the host's keychain directory and search-list preferences
+ * into the run home so the CLI finds the keychain while HOME stays isolated.
+ * Removing the run home later unlinks these entries without touching the
+ * targets. Symlinks that cannot be created are skipped.
+ */
+export async function linkHostKeychainIntoHome(
+  home: string,
+  hostHome: string = os.homedir(),
+  platform: NodeJS.Platform = process.platform,
+): Promise<void> {
+  if (platform !== "darwin") return;
+  const library = path.join(home, "Library");
+  await mkdir(path.join(library, "Preferences"), { recursive: true, mode: 0o700 });
+  const links: Array<[string, string]> = [
+    [path.join(hostHome, "Library", "Keychains"), path.join(library, "Keychains")],
+    [
+      path.join(hostHome, "Library", "Preferences", "com.apple.security.plist"),
+      path.join(library, "Preferences", "com.apple.security.plist"),
+    ],
+  ];
+  for (const [target, link] of links) {
+    await symlink(target, link).catch(() => undefined);
+  }
+}
 
 /** The Claude credential document that Claude Code writes and rotates in place. */
 function claudeOauthBlock(
@@ -312,6 +343,8 @@ export async function prepareManagedAiRuntime(
       );
     if (subscriptionFile) await writeFile(authFile, value, { mode: 0o600 });
     else env[capability.envKey] = value;
+    if (subscriptionFile && input.binding.provider === "anthropic")
+      await linkHostKeychainIntoHome(home);
     // Routing belongs to the credential, never to the agent: an API-key
     // connection created with a gateway URL is used through that gateway,
     // and the agent-level base URL overrides rejected above stay rejected.
