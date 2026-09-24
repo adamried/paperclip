@@ -14,7 +14,7 @@ export const AGENT_ARC_TOTAL_STEPS = 3;
  * than no number at all. The strip's own "Step N of 3" line carries the count.
  */
 export const AGENT_ARC_STEP_LABELS = [
-  "Create your first agent",
+  "Hire your CEO",
   "Connect a model",
   "Review",
 ] as const;
@@ -36,7 +36,7 @@ export const ONBOARDING_WIZARD_STEPS = [1, 3, 4, 5] as const;
 /** Destinations for the full walk, in the same order. */
 export const ONBOARDING_STEP_LABELS = [
   "Name your organization",
-  "Create your first agent",
+  "Hire your CEO",
   "Connect a model",
   "Review",
 ] as const;
@@ -100,7 +100,7 @@ export function Stepper({
   /**
    * What each segment goes to. Defaults to the arc's three; the full walk from
    * the front door passes its own four, since the same strip serves both and a
-   * segment announcing "Create your first agent" on the organization step would
+   * segment announcing "Hire your CEO" on the organization step would
    * be worse than a bare number.
    */
   labels?: readonly string[];

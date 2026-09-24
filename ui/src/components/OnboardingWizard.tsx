@@ -2496,14 +2496,14 @@ function OnboardingWizardInner({
                             load rather than as something waiting its turn. */}
                         {step < 5 && <SleepingZs />}
                       </div>
-                      <AgentPreview agentName={agentName} agentRole="" />
+                      <AgentPreview agentName={agentName} agentRole={AGENT_ROLE_LABELS[agentRole]} />
                     </motion.div>
 
                     <OnboardingHeading
                       center
                       title={
                         step === 3
-                          ? "Create your first agent"
+                          ? "Hire your CEO"
                           : step === 4
                             ? "Connect a model"
                             : "Let's get started..."
@@ -2512,10 +2512,12 @@ function OnboardingWizardInner({
                       // the capsule and the heading say what this is, and a
                       // sentence restating it only pushes the fields down.
                       lede={
-                        step === 3 ? undefined : step === 4 ? (
+                        step === 3 ? (
+                          <>You are the Board. Your first job is to hire a CEO to run {companyName.trim() || "your organization"} day to day; you set direction and approve what matters.</>
+                        ) : step === 4 ? (
                           <>Paperclip works with your subscription or API keys.</>
                         ) : (
-                          <>{agentName.trim() || "Your first agent"} is ready to work!</>
+                          <>{agentName.trim() || "Your CEO"} is ready to work!</>
                         )
                       }
                     />
@@ -2537,7 +2539,7 @@ function OnboardingWizardInner({
                   <OnboardingHeading
                     center
                     title="What is the name of your organization?"
-                    lede="Welcome to Paperclip — let's set up your organization."
+                    lede="Welcome to Paperclip — let's set up your organization. You are its Board; your first hire will be its CEO."
                   />
                   {/* The field takes the agent step's measure rather than the
                       column's, so the two questions the wizard asks — name the
@@ -2593,7 +2595,7 @@ function OnboardingWizardInner({
                     <Input
                       id="onboarding-agent-name"
                       className="h-(--sz-44px) rounded-lg border-transparent bg-muted shadow-none dark:bg-muted"
-                      placeholder="e.g. Chief of staff"
+                      placeholder="e.g. Atlas"
                       value={agentName}
                       onChange={(e) => setAgentName(e.target.value)}
                       onKeyDown={(e) => {

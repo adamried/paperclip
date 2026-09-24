@@ -16,7 +16,8 @@ const localHealth = vi.hoisted(() => ({ get: vi.fn() }));
 vi.mock("@/api/health", () => ({ healthApi: localHealth }));
 const managedApi = vi.hoisted(() => ({
   list: vi.fn(async () => ({ currentUserId: "user-1", connections: [] })),
-  startLocalLogin: vi.fn(async () => ({ sessionId: "local-attempt", command: "CODEX_HOME='/fixture/login' codex login", expiresAt: "2026-09-11T20:00:00Z" })),
+  // Claude and Codex both start an isolated sign-in; the card shows the command.
+  startLocalLogin: vi.fn(async (_companyId: string, input: { provider?: string }) => ({ sessionId: "local-attempt", command: input?.provider === "anthropic" ? "CLAUDE_CONFIG_DIR='/fixture/login' claude auth login" : "CODEX_HOME='/fixture/login' codex login", expiresAt: "2026-09-11T20:00:00Z" })),
   checkLocalLogin: vi.fn(async () => ({ status: "sign_in_required" as "sign_in_required" | "ready" })),
   cancelLocalLogin: vi.fn(async () => ({})),
   connectLocal: vi.fn(async () => ({ connectionId: "local-connection", grantId: "local-grant" })),
@@ -444,7 +445,7 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
       await clickByText((t) => t.startsWith("Continue"));
 
       expect(mockCompaniesApi.create).toHaveBeenCalledWith({ name: "Initech" });
-      expect(document.body.textContent).toContain("Create your first agent");
+      expect(document.body.textContent).toContain("Hire your CEO");
       expect(document.body.textContent).not.toContain("Define your mission");
       expect(document.body.textContent).not.toContain("Tell us about your team");
 
@@ -461,7 +462,7 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
       mockCompaniesApi.create.mockResolvedValue({ id: "company-new", issuePrefix: "INI" });
       const { root } = await openStepOne();
       await clickByText((t) => t.startsWith("Continue"));
-      expect(document.body.textContent).toContain("Create your first agent");
+      expect(document.body.textContent).toContain("Hire your CEO");
 
       // Step 3 → 4 needs an agent name — the one field the step has now.
       const agentField = document.body.querySelector(
@@ -622,7 +623,7 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
       // The mock is declared with no parameters, so index the call rather than
       // destructuring a zero-length tuple type.
       const hireArgs = mockAgentsApi.hire.mock.calls.at(-1) as unknown[];
-      expect((hireArgs[1] as { role: string }).role).toBe("general");
+      expect((hireArgs[1] as { role: string }).role).toBe("ceo");
 
       await act(async () => root.unmount());
     });
@@ -690,7 +691,7 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
       await flushReact();
 
       expect(mockCompaniesApi.create).toHaveBeenCalledTimes(1);
-      expect(document.body.textContent).toContain("Create your first agent");
+      expect(document.body.textContent).toContain("Hire your CEO");
 
       await act(async () => root.unmount());
     });
@@ -725,7 +726,7 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
 
       await act(async () => resolveCreate({ id: "company-new", issuePrefix: "INI" }));
       await flushReact();
-      expect(document.body.textContent).toContain("Create your first agent");
+      expect(document.body.textContent).toContain("Hire your CEO");
 
       await act(async () => root.unmount());
     });
@@ -736,7 +737,7 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
       mockCompaniesApi.create.mockResolvedValue({ id: "company-new", issuePrefix: "INI" });
       const { root } = await openStepOne();
       await clickByText((t) => t.startsWith("Continue"));
-      expect(document.body.textContent).toContain("Create your first agent");
+      expect(document.body.textContent).toContain("Hire your CEO");
 
       await clickByText((t) => t.includes("Back"));
 
@@ -1344,7 +1345,7 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
     // The draft is restored once companies settle: step 3 (Create your first
     // agent) with the saved agent name in the input, not the defaults
     // (step 0, "Chief of staff").
-    expect(document.body.textContent).toContain("Create your first agent");
+    expect(document.body.textContent).toContain("Hire your CEO");
     const nameInput = document.body.querySelector(
       "#onboarding-agent-name",
     ) as HTMLInputElement | null;
@@ -1354,7 +1355,7 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
     // labelled by destination: the wizard has its own numbering, and two
     // controls both announcing "Step 1" would mean different things.
     const currentStep = document.body.querySelector('[aria-current="step"]');
-    expect(currentStep?.getAttribute("aria-label")).toBe("Create your first agent");
+    expect(currentStep?.getAttribute("aria-label")).toBe("Hire your CEO");
     expect(document.body.textContent).toContain("Step 1 of 3");
 
     await act(async () => {

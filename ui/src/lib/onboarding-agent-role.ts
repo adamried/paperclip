@@ -8,13 +8,12 @@ import { AGENT_ROLE_LABELS, type AgentRole } from "@paperclipai/shared";
 /**
  * The role every onboarding hire is filed under.
  *
- * The arc asks for a name, not a role: someone naming their first agent is
- * describing what it should do, and the placeholder carries the range of
- * answers that fit. `general` is the honest filing for that — it claims
- * nothing the customer did not say — and the role can be set later, in the
- * app, where the agent's work gives the choice meaning.
+ * The first hire is the CEO. The customer is the Board, and a company without
+ * a CEO has much of the app gated off (delegation, approvals routing, board
+ * chat), so the wizard frames the first screen as hiring one rather than as
+ * naming a generic agent. The role can still be changed later in the app.
  */
-export const DEFAULT_AGENT_ROLE = "general" as const;
+export const DEFAULT_AGENT_ROLE = "ceo" as const;
 
 export const DEFAULT_AGENT_NAME = "Chief of staff";
 
