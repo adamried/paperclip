@@ -56,6 +56,12 @@ export function humanizeSystemNotice(input: {
   const body = input.body ?? "";
   const code = retryFailureCode(body);
 
+  if (code === "provider_quota") {
+    return {
+      title: "Task paused — Claude usage limit reached",
+      tone: presentationTone ?? "warning",
+    };
+  }
   if (code === "claude_auth_required") {
     return {
       title: "Task paused — Claude needs re-authentication",

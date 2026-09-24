@@ -3301,6 +3301,52 @@ function describeErrorDiagnostics(err: unknown): {
   return { errorName, acpCode, causeMessage, retryable, stackPreview };
 }
 
+/**
+ * The exact leading text of Claude Code's synthetic "usage limit reached"
+ * assistant message, as exported by the Agent SDK (USAGE_LIMIT_ERROR_PREFIXES).
+ * Copied rather than imported: this package does not depend on the SDK, and
+ * the list is the SDK's stable public contract for these messages.
+ */
+export const USAGE_LIMIT_NOTICE_PREFIXES: readonly string[] = [
+  "You've hit your",
+  "You've reached your",
+  "You're out of usage credits",
+  "Your org is out of usage · add funds to continue",
+  "Your org is out of usage · contact your admin",
+  "Your seat type doesn't include usage credits",
+  "Your seat type doesn't include usage",
+  "Your usage allocation has been disabled by your admin",
+  "Your group's usage limit is set to $0",
+  "Fable 5 requires usage credits",
+  "You're out of extra usage",
+  "Your seat type doesn't include extra usage",
+];
+
+/** True when `text` is Claude Code's own usage-limit notice. */
+export function isUsageLimitNotice(text: string | null | undefined): boolean {
+  if (typeof text !== "string") return false;
+  const trimmed = text.trim();
+  return trimmed.length > 0 && USAGE_LIMIT_NOTICE_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
+}
+
+/**
+ * The category acpx reports when the ACP agent publishes a typed terminal
+ * session failure ("ACP agent reported a terminal <category> failure."):
+ * `access` for a login problem, `limit` for a usage or rate limit, and so on.
+ */
+export function acpxTerminalFailureCategory(message: string): string | null {
+  const match = /ACP agent reported a terminal (\w+) failure/.exec(message);
+  return match ? match[1] : null;
+}
+
+/** The run error for a usage-limit failure, leading with Claude's own notice when one was seen. */
+export function formatUsageLimitErrorMessage(notice: string | null | undefined): string {
+  const trimmed = typeof notice === "string" ? notice.trim() : "";
+  return trimmed
+    ? `Claude usage limit reached: ${trimmed}`
+    : "Claude usage limit reached. The provider refused this turn; wait for the limit window to reset, then retry.";
+}
+
 function classifyError(
   err: unknown,
   phase?: AcpxExecutionPhase,
@@ -3333,6 +3379,25 @@ function classifyError(
       errorMeta: { category: "runtime", ...baseMeta },
     };
   }
+  // acpx relays the ACP agent's typed terminal failure as a fixed sentence
+  // naming its category. A `limit` failure is the provider refusing the turn
+  // for a usage or rate limit, which is the `provider_quota` family the
+  // heartbeat already schedules a delayed retry for; an `access` failure is a
+  // login problem. Claude's own usage-limit notice text is treated the same.
+  const terminalCategory = acpxTerminalFailureCategory(message);
+  if (terminalCategory === "limit" || isUsageLimitNotice(message)) {
+    return {
+      errorCode: "provider_quota",
+      errorMeta: { category: "quota", ...baseMeta, ...(terminalCategory ? { acpTerminalFailureCategory: terminalCategory } : {}) },
+    };
+  }
+  if (terminalCategory === "access") {
+    return {
+      errorCode: "acpx_auth_required",
+      errorMeta: { category: "auth", ...baseMeta, acpTerminalFailureCategory: terminalCategory },
+    };
+  }
+  if (terminalCategory) baseMeta.acpTerminalFailureCategory = terminalCategory;
   const lower = message.toLowerCase();
   const authLike = lower.includes("auth") || lower.includes("login") || lower.includes("credential");
   if (authLike) {
@@ -4648,6 +4713,13 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
       // automatic comment dump.
       const outputSegments: string[] = [];
       let currentOutputChunk: string[] = [];
+      // Claude Code announces an exhausted usage limit as a synthetic assistant
+      // message before the turn fails. Keep the latest one so the failure can
+      // say what the limit was and when it resets, in Claude's own words.
+      let lastUsageLimitNotice: string | null = null;
+      const noteUsageLimitText = (text: string) => {
+        if (isUsageLimitNotice(text)) lastUsageLimitNotice = text.trim();
+      };
       const flushOutputSegment = () => {
         if (currentOutputChunk.length === 0) return;
         outputSegments.push(currentOutputChunk.join(""));
@@ -4831,6 +4903,8 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
             }
             if (event.type === "text_delta" && event.stream !== "thought") {
               currentOutputChunk.push(event.text);
+              noteUsageLimitText(event.text);
+              noteUsageLimitText(currentOutputChunk.join(""));
             } else if (event.type === "tool_call" && event.tag !== "tool_call_update") {
               // ACP makes tool-call status optional. The normalized event tag is
               // the reliable boundary between an initial call and its updates,
@@ -5100,13 +5174,23 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
         // failing emission never propagates: the settlement owns the teardown, and
         // it runs only after this returns a completion. On an emission failure the
         // run records a degraded result from the pre-emit message.
+        // A usage-limit failure gets a self-describing message built from
+        // Claude's own notice, so the run says "limit reached, resets at …"
+        // instead of the acpx transport sentence.
+        const usageLimitMessage =
+          !timedOut && classifyError(err, phase).errorCode === "provider_quota"
+            ? formatUsageLimitErrorMessage(lastUsageLimitNotice)
+            : undefined;
+        if (usageLimitMessage) {
+          await ctx.onLog("stderr", `[paperclip] ${usageLimitMessage}\n`);
+        }
         let emitted: Awaited<ReturnType<typeof emitAcpxFailure>> | null = null;
         try {
-          emitted = await emitAcpxFailure({ ctx, prepared, err, phase, messageOverride });
+          emitted = await emitAcpxFailure({ ctx, prepared, err, phase, messageOverride: messageOverride ?? usageLimitMessage });
         } catch {
           emitted = null;
         }
-        const message = emitted?.message ?? preEmitMessage;
+        const message = emitted?.message ?? usageLimitMessage ?? preEmitMessage;
         capturedResult = {
           exitCode: 1,
           signal: timedOut ? "SIGTERM" : null,
@@ -5118,7 +5202,7 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
           ...referencedProjectStagingFailuresField,
           model: prepared.requestedModel || null,
           clearSession: clearSession || timedOut,
-          resultJson: { phase },
+          resultJson: { phase, ...(usageLimitMessage && lastUsageLimitNotice ? { usageLimitNotice: lastUsageLimitNotice } : {}) },
           summary: message,
         };
         // Return a typed failed completion so the coordinator settles for a cause
