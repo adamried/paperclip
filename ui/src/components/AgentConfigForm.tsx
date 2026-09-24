@@ -18,7 +18,7 @@ import type {
   EnvSecretRefBinding,
   Environment,
 } from "@paperclipai/shared";
-import { AGENT_DEFAULT_MAX_CONCURRENT_RUNS, AGENT_ROLES, AGENT_ROLE_LABELS, supportedEnvironmentDriversForAdapter, isValidBrowserCode, ADAPTER_AUTH_MISSING_CHECK_CODE } from "@paperclipai/shared";
+import { AGENT_DEFAULT_MAX_CONCURRENT_RUNS, AGENT_ROLES, AGENT_ROLE_LABELS, AGENT_ROLE_INSTRUCTION_FILES, agentRoleInstructionBundle, supportedEnvironmentDriversForAdapter, isValidBrowserCode, ADAPTER_AUTH_MISSING_CHECK_CODE, type AgentRole } from "@paperclipai/shared";
 import type { AdapterModel } from "../api/agents";
 import { agentsApi } from "../api/agents";
 import { ApiError } from "../api/client";
@@ -1509,12 +1509,12 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                 </SelectContent>
               </Select>
               {(() => {
-                // Only the CEO role has its own instruction bundle; every other
-                // role shares the generic one. Offer to load the new role's
-                // bundle when the change crosses that line.
+                // Each role seeds its own instruction bundle. Offer to load the
+                // new role's bundle when the change lands on a different one.
                 const nextRole = eff("identity", "role", props.agent.role);
-                const bundleOf = (role: string) => (role === "ceo" ? "ceo" : "default");
+                const bundleOf = agentRoleInstructionBundle;
                 if (nextRole === props.agent.role || bundleOf(nextRole) === bundleOf(props.agent.role)) return null;
+                const nextFiles = AGENT_ROLE_INSTRUCTION_FILES[bundleOf(nextRole) === "default" ? "general" : (nextRole as AgentRole)];
                 const apply = eff<boolean>("identity", "applyRoleInstructions", false) === true;
                 return (
                   <label className="mt-2 flex items-start gap-2 text-sm text-muted-foreground">
@@ -1526,9 +1526,9 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                     />
                     <span>
                       Also load the default instructions for this role when saving.{" "}
-                      {bundleOf(nextRole) === "ceo"
-                        ? "Replaces AGENTS.md and adds HEARTBEAT.md, SOUL.md and TOOLS.md."
-                        : "Replaces the instructions folder with the standard AGENTS.md."}{" "}
+                      {bundleOf(nextRole) === "default"
+                        ? "Replaces the instructions folder with the standard AGENTS.md."
+                        : `Replaces the instructions folder with the ${AGENT_ROLE_LABELS[nextRole as AgentRole]} defaults: ${nextFiles.join(", ")}.`}{" "}
                       Current instruction edits are discarded.
                     </span>
                   </label>

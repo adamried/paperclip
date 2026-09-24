@@ -139,6 +139,7 @@ function guessRoleTag(node: OrgNode): string {
   const name = node.name.toLowerCase();
   const role = node.role.toLowerCase();
   if (name === "ceo" || role.includes("chief executive")) return "ceo";
+  if (name === "chief_of_staff" || role.includes("chief of staff")) return "operations";
   if (name === "cto" || role.includes("chief technology") || role.includes("technology")) return "cto";
   if (name === "cmo" || role.includes("chief marketing") || role.includes("marketing")) return "cmo";
   if (name === "cfo" || role.includes("chief financial")) return "cfo";
