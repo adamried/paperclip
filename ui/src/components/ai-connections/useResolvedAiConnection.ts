@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import type { AiConnectionBinding, AiManagedConnectionSummary } from "@paperclipai/shared";
+import type { AiConnectionBinding } from "@paperclipai/shared";
 import { aiConnectionsApi } from "@/api/ai-connections";
-import { personalAiDefault } from "./model";
+import { personalAiDefault, type AiConnectionSummary } from "./model";
 
 /**
  * The connection an agent binding resolves to right now: the pinned one for
@@ -14,7 +14,7 @@ export function useResolvedAiConnection(
   companyId: string | null | undefined,
   binding: AiConnectionBinding | undefined,
   agentId?: string,
-): AiManagedConnectionSummary | null {
+): AiConnectionSummary | null {
   const accounts = useQuery({
     queryKey: ["ai-connections", companyId, agentId],
     queryFn: () => aiConnectionsApi.list(companyId!, agentId),
@@ -24,5 +24,5 @@ export function useResolvedAiConnection(
   if ("connectionId" in binding) {
     return accounts.data.connections.find((connection) => connection.id === binding.connectionId) ?? null;
   }
-  return personalAiDefault(accounts.data.connections, { provider: binding.provider }, accounts.data.currentUserId) ?? null;
+  return personalAiDefault(accounts.data.connections, { companyId: companyId!, provider: binding.provider }, accounts.data.currentUserId) ?? null;
 }

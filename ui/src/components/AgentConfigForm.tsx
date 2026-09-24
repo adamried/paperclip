@@ -902,7 +902,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   ).data;
   // Resolve the binding to the connection it uses today, so switching the
   // personal default (subscription to gateway key, say) refreshes the list.
-  const resolvedAiConnection = useResolvedAiConnection(selectedCompanyId, modelAiBinding, props.agent.id);
+  const resolvedAiConnection = useResolvedAiConnection(selectedCompanyId, modelAiBinding, isCreate ? undefined : props.agent.id);
   const modelDiscovery = resolvedAiConnection
     ? { aiConnectionId: resolvedAiConnection.id }
     : modelAiBinding && "connectionId" in modelAiBinding
