@@ -2176,8 +2176,9 @@ function OnboardingWizardInner({
         adapterConfig: hireAdapterConfig,
         ...(shouldApplyStoredClaudeLogin ? { applyStoredClaudeLogin: true } : {}),
         // The server owns what the first agent is told now: this marker seeds
-        // the chief-of-staff persona over the agent's entry instruction file.
-        // The wizard no longer composes or overwrites it.
+        // the CEO bundle plus the Board-facing onboarding section (or, for a
+        // non-CEO role, the chief-of-staff persona) over the agent's entry
+        // instruction file. The wizard no longer composes or overwrites it.
         onboardingFirstAgent: true,
         runtimeConfig: { ...buildNewAgentRuntimeConfig(), ...(managedBinding ? { aiConnection: managedBinding } : {}) }
       });
@@ -2196,8 +2197,8 @@ function OnboardingWizardInner({
         queryKey: queryKeys.agents.list(createdCompanyId)
       });
       // The agent's instruction file is seeded server-side from the
-      // `onboardingFirstAgent` marker above (the chief-of-staff persona). The
-      // wizard no longer composes or overwrites it.
+      // `onboardingFirstAgent` marker above. The wizard no longer composes or
+      // overwrites it.
 
       if (!isCurrent()) return;
       setCreatedAgentId(agent.id);

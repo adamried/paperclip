@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import { z } from "zod";
+import { loadDefaultAgentInstructionsBundle } from "./default-agent-instructions.js";
 import {
   askUserQuestionsPayloadSchema,
   askUserQuestionsQuestionOptionSchema,
@@ -144,12 +145,33 @@ export async function renderChiefOfStaffPersona(
   return fillFirstTaskPlaceholders(template, placeholders);
 }
 
-// The instruction bundle for the onboarding first agent: the chief-of-staff
-// persona as the entry AGENTS.md. The generic execution contract
-// (default/AGENTS.md) is still appended on every run by the runner, unchanged.
+// Layer B for a CEO first hire — the Board-facing onboarding guidance appended
+// to the CEO's standing AGENTS.md, so the first agent keeps the whole CEO
+// bundle (SOUL, HEARTBEAT, delegation rules) past its first conversation.
+export async function renderCeoOnboardingSection(
+  placeholders: OnboardingFirstTaskPlaceholders,
+): Promise<string> {
+  const template = await loadFirstTaskAsset("ceo-onboarding.md");
+  return fillFirstTaskPlaceholders(template, placeholders);
+}
+
+// The instruction bundle for the onboarding first agent. A CEO gets the full
+// CEO bundle with the onboarding section appended to its AGENTS.md; any other
+// role gets the chief-of-staff persona as its entry AGENTS.md. The generic
+// execution contract (default/AGENTS.md) is still appended on every run by
+// the runner, unchanged.
 export async function buildOnboardingFirstAgentInstructionsBundle(
   placeholders: OnboardingFirstTaskPlaceholders,
+  options: { role?: string | null } = {},
 ): Promise<{ files: Record<string, string>; entryFile: string }> {
+  if (options.role === "ceo") {
+    const bundle = await loadDefaultAgentInstructionsBundle("ceo");
+    const section = await renderCeoOnboardingSection(placeholders);
+    return {
+      files: { ...bundle, "AGENTS.md": `${bundle["AGENTS.md"]!.trimEnd()}\n\n${section.trim()}\n` },
+      entryFile: "AGENTS.md",
+    };
+  }
   const persona = await renderChiefOfStaffPersona(placeholders);
   return { files: { "AGENTS.md": persona }, entryFile: "AGENTS.md" };
 }

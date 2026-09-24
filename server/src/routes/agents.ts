@@ -2713,9 +2713,11 @@ export function agentRoutes(
   }
 
   // Resolve the server-owned instruction bundle for the onboarding first agent.
-  // The marker seeds the chief-of-staff persona (server/src/onboarding-assets/
-  // first-task/chief-of-staff/AGENTS.md, placeholders filled) over the agent's
-  // entry file instead of the generic default. Honored only for board-authored
+  // A CEO first hire keeps the full CEO bundle with the Board-facing onboarding
+  // section (server/src/onboarding-assets/first-task/ceo-onboarding.md,
+  // placeholders filled) appended to AGENTS.md; any other role gets the
+  // chief-of-staff persona (first-task/chief-of-staff/AGENTS.md) over its entry
+  // file instead of the generic default. Honored only for board-authored
   // requests — the onboarding wizard runs as the board — so a client marker
   // alone cannot swap another actor's instructions. The generic execution
   // contract (default/AGENTS.md) is still appended on every run, unchanged.
@@ -2723,14 +2725,15 @@ export function agentRoutes(
     onboardingFirstAgent: unknown;
     actorType: string;
     agentName: string;
+    agentRole: string;
     organizationName: string | null;
   }): Promise<{ files: Record<string, string>; entryFile: string } | undefined> {
     if (params.onboardingFirstAgent !== true) return undefined;
     if (params.actorType !== "board") return undefined;
-    return buildOnboardingFirstAgentInstructionsBundle({
-      agentName: params.agentName,
-      organizationName: params.organizationName,
-    });
+    return buildOnboardingFirstAgentInstructionsBundle(
+      { agentName: params.agentName, organizationName: params.organizationName },
+      { role: params.agentRole },
+    );
   }
 
   function assertNoNewAgentLegacyPromptTemplate(adapterType: string, adapterConfig: Record<string, unknown>) {
@@ -4574,6 +4577,7 @@ export function agentRoutes(
         onboardingFirstAgent: hireOnboardingFirstAgent,
         actorType: req.actor.type,
         agentName: createdAgent.name,
+        agentRole: createdAgent.role,
         organizationName: company.name ?? null,
       });
       const agent = await materializeDefaultInstructionsBundleForNewAgent(
@@ -4815,6 +4819,7 @@ export function agentRoutes(
       onboardingFirstAgent: createOnboardingFirstAgent,
       actorType: req.actor.type,
       agentName: createdAgent.name,
+      agentRole: createdAgent.role,
       organizationName: company.name ?? null,
     });
     const agent = await materializeDefaultInstructionsBundleForNewAgent(

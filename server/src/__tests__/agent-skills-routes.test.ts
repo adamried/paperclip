@@ -1145,12 +1145,14 @@ describe.sequential("agent skill routes", () => {
     );
   });
 
-  it("materializes the bundled default instruction set for non-CEO agents with no prompt template", async () => {
+  it("materializes the bundled default instruction set for general agents with no prompt template", async () => {
+    // Every named role seeds its own bundle now; `general` is the role that
+    // still receives the shared execution contract as its entry file.
     const res = await requestApp(await createApp(), (baseUrl) => request(baseUrl)
       .post("/api/companies/company-1/agents")
       .send({
         name: "Engineer",
-        role: "engineer",
+        role: "general",
         adapterType: "claude_local",
         adapterConfig: {},
       }));
@@ -1161,7 +1163,7 @@ describe.sequential("agent skill routes", () => {
       expect(mockAgentInstructionsService.materializeManagedBundle).toHaveBeenCalledWith(
         expect.objectContaining({
           id: createdAgentId,
-          role: "engineer",
+          role: "general",
           adapterType: "claude_local",
         }),
         expect.objectContaining({
@@ -1259,6 +1261,36 @@ describe.sequential("agent skill routes", () => {
       .send({ name: "Biff", role: "general", adapterType: "codex_local" });
     expect(res.status, JSON.stringify(res.body)).toBe(201);
     expect(mockAgentService.create.mock.calls[0][1].adapterConfig.paperclipSkillSync).toBeUndefined();
+  });
+
+  it("seeds the full CEO bundle plus the onboarding section for a CEO onboarding first agent", async () => {
+    const res = await requestApp(await createApp(), (baseUrl) => request(baseUrl)
+      .post("/api/companies/company-1/agents")
+      .send({
+        name: "Ada",
+        role: "ceo",
+        adapterType: "claude_local",
+        adapterConfig: {},
+        onboardingFirstAgent: true,
+      }));
+
+    expect([200, 201], JSON.stringify(res.body)).toContain(res.status);
+    const createdAgentId = expectResponseId(res.body.id);
+    await vi.waitFor(() => {
+      expect(mockAgentInstructionsService.materializeManagedBundle).toHaveBeenCalledWith(
+        expect.objectContaining({ id: createdAgentId, role: "ceo" }),
+        expect.objectContaining({
+          "AGENTS.md": expect.stringContaining("## Onboarding: working with the Board"),
+          "SOUL.md": expect.stringContaining("CEO Persona"),
+          "HEARTBEAT.md": expect.any(String),
+        }),
+        { entryFile: "AGENTS.md", replaceExisting: false },
+      );
+    });
+    const entrySeed = mockAgentInstructionsService.materializeManagedBundle.mock.calls.at(-1)?.[1] as Record<string, string> | undefined;
+    expect(entrySeed?.["AGENTS.md"]).toContain("You are the CEO.");
+    expect(entrySeed?.["AGENTS.md"]).toContain("You are Ada, the CEO of");
+    expect(entrySeed?.["AGENTS.md"]).not.toContain("chief of staff for");
   });
 
   it("does not trust an agent-supplied onboarding marker to select chief-of-staff defaults", async () => {

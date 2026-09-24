@@ -109,5 +109,24 @@ describe("chief-of-staff persona", () => {
     });
     expect(bundle.entryFile).toBe("AGENTS.md");
     expect(bundle.files["AGENTS.md"]).toContain("You are Ada, chief of staff for Acme.");
+    expect(Object.keys(bundle.files)).toEqual(["AGENTS.md"]);
+  });
+
+  it("gives a CEO first hire the full CEO bundle with the onboarding section appended", async () => {
+    const bundle = await buildOnboardingFirstAgentInstructionsBundle(
+      { agentName: "Ada", organizationName: "Acme" },
+      { role: "ceo" },
+    );
+    expect(bundle.entryFile).toBe("AGENTS.md");
+    expect(Object.keys(bundle.files).sort()).toEqual(["AGENTS.md", "HEARTBEAT.md", "SOUL.md", "TOOLS.md"]);
+    const entry = bundle.files["AGENTS.md"]!;
+    expect(entry.startsWith("You are the CEO.")).toBe(true);
+    expect(entry).toContain("## Onboarding: working with the Board");
+    expect(entry).toContain("You are Ada, the CEO of Acme");
+    expect(entry).toContain("### Hiring during onboarding");
+    expect(entry).not.toContain("chief of staff for");
+    expect(entry).not.toContain("{{agentName}}");
+    expect(entry).not.toContain("{{organizationName}}");
+    expect(bundle.files["SOUL.md"]).toContain("CEO Persona");
   });
 });

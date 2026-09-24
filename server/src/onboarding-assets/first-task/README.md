@@ -15,7 +15,8 @@ organization's first task and when it hires the first agent.
 | `brief.md` | A (steps 1, 3, 4) | The first task's description. Contains the `{{proposalStep}}` placeholder and tells the agent what to do with each answer to the opening card. |
 | `proposal-confirmation.md` | A (step 2, task path) | The proposal instructions used when the plan-proposal toggle is **off** (default): a one-card `request_confirmation`. |
 | `proposal-plan.md` | A (step 2, task path) | The proposal instructions used when the toggle is **on**: a short plan document plus a checkbox card. |
-| `chief-of-staff/AGENTS.md` | B | The chief-of-staff persona seeded over the first agent's entry instruction file at hire time. |
+| `ceo-onboarding.md` | B | The Board-facing onboarding section appended to the CEO's standing `AGENTS.md` when the first hire is a CEO (the wizard's default). The agent keeps the full CEO bundle (SOUL, HEARTBEAT, TOOLS) and runs hiring itself until a Chief of Staff exists. |
+| `chief-of-staff/AGENTS.md` | B | The chief-of-staff persona seeded over the first agent's entry instruction file at hire time when the first hire is any role other than CEO. |
 | `README.md` | — | This file. |
 
 ## The opening card
@@ -36,9 +37,10 @@ and the message wakes the agent as before.
 
 - `{{agentName}}` → the agent's chosen name. When the agent has no name the
   greeting drops the name gracefully ("I'm your first agent teammate"), matching
-  the historical behaviour. Used in `greeting.md` and `chief-of-staff/AGENTS.md`.
-- `{{organizationName}}` → the organization (company) name. Used in
+  the historical behaviour. Used in `greeting.md`, `ceo-onboarding.md` and
   `chief-of-staff/AGENTS.md`.
+- `{{organizationName}}` → the organization (company) name. Used in
+  `ceo-onboarding.md` and `chief-of-staff/AGENTS.md`.
 - `{{proposalStep}}` (in `brief.md` only) → replaced with the contents of
   `proposal-confirmation.md` or `proposal-plan.md`, chosen by the
   `enableFirstTaskPlanProposal` toggle.
