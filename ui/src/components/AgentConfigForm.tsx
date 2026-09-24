@@ -60,6 +60,7 @@ import { environmentDisplayLabel } from "../lib/managed-sandbox-environment";
 import { extractModelName, extractProviderId } from "../lib/model-utils";
 import { queryKeys } from "../lib/queryKeys";
 import { useCompany } from "../context/CompanyContext";
+import { useResolvedAiConnection } from "@/components/ai-connections/useResolvedAiConnection";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Field,
@@ -899,11 +900,16 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   const modelAiBinding = aiConnectionBindingSchema.safeParse(
     (overlay.runtime.runtimeConfig as Record<string, unknown> | undefined)?.aiConnection ?? runtimeConfig.aiConnection,
   ).data;
-  const modelDiscovery = modelAiBinding && "connectionId" in modelAiBinding
-    ? { aiConnectionId: modelAiBinding.connectionId }
-    : modelAiBinding
-      ? { aiProvider: modelAiBinding.provider }
-      : {};
+  // Resolve the binding to the connection it uses today, so switching the
+  // personal default (subscription to gateway key, say) refreshes the list.
+  const resolvedAiConnection = useResolvedAiConnection(selectedCompanyId, modelAiBinding, props.agent.id);
+  const modelDiscovery = resolvedAiConnection
+    ? { aiConnectionId: resolvedAiConnection.id }
+    : modelAiBinding && "connectionId" in modelAiBinding
+      ? { aiConnectionId: modelAiBinding.connectionId }
+      : modelAiBinding
+        ? { aiProvider: modelAiBinding.provider }
+        : {};
   // Fetch adapter models for the effective provider, including unsaved changes.
   const modelQueryKey = selectedCompanyId
     ? queryKeys.agents.adapterModels(selectedCompanyId, adapterType, currentDefaultEnvironmentId || null, modelProvider, modelDiscovery.aiConnectionId ?? modelDiscovery.aiProvider ?? null)

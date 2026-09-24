@@ -20,6 +20,7 @@ import type {
   EnvBinding,
 } from "@paperclipai/shared";
 import { ADAPTER_AUTH_MISSING_CHECK_CODE, AGENT_ROLES, AGENT_ROLE_LABELS, type AgentRole } from "@paperclipai/shared";
+import { useResolvedAiConnection } from "@/components/ai-connections/useResolvedAiConnection";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useNavigate, useSearchParams } from "@/lib/router";
 import { agentsApi } from "@/api/agents";
@@ -156,6 +157,9 @@ function Setup({
   );
   const [connection, setConnection] = useState<ProviderConnection | null>(null);
   const aiBinding = runtimeAiBinding ?? connection?.aiConnection;
+  // The connection the binding resolves to now; a new sign-in or a changed
+  // default re-resolves it and the model list refetches for that account.
+  const resolvedAiConnection = useResolvedAiConnection(companyId, aiBinding);
   const [repository, setRepository] = useState("");
   const [branch, setBranch] = useState("");
   const [createdInSession, setCreated] = useState<Agent | null>(null);
@@ -217,10 +221,12 @@ function Setup({
     queryFn: () => environmentsApi.capabilities(companyId),
   });
   const models = useQuery({
-    queryKey: queryKeys.agents.adapterModels(companyId, brandType, null, aiBinding?.provider, aiBinding && "connectionId" in aiBinding ? aiBinding.connectionId : aiBinding?.provider ?? null),
+    queryKey: queryKeys.agents.adapterModels(companyId, brandType, null, aiBinding?.provider, resolvedAiConnection?.id ?? (aiBinding && "connectionId" in aiBinding ? aiBinding.connectionId : aiBinding?.provider ?? null)),
     queryFn: () => agentsApi.adapterModels(companyId, brandType, {
       provider: aiBinding?.provider,
-      ...(aiBinding && "connectionId" in aiBinding ? { aiConnectionId: aiBinding.connectionId } : aiBinding ? { aiProvider: aiBinding.provider } : {}),
+      ...(resolvedAiConnection
+        ? { aiConnectionId: resolvedAiConnection.id }
+        : aiBinding && "connectionId" in aiBinding ? { aiConnectionId: aiBinding.connectionId } : aiBinding ? { aiProvider: aiBinding.provider } : {}),
     }),
     enabled: Boolean(brandType) && showModel,
     retry: false,
