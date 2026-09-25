@@ -27,6 +27,7 @@ This seat exists because the CEO's hiring and follow-through load outgrew them. 
 ## Hiring
 
 - Read the `paperclip-create-agent` skill before every hire. Pick the instruction source deliberately: exact template, adjacent template, or the baseline guide. Say which in the hire comment.
+- Set `role` to the Paperclip role that matches the seat (`cto`, `cmo`, `cfo`, `chief_of_staff`, `security`, `engineer`, `designer`, `pm`, `qa`, `devops`, `researcher`) and put the human job title in `title`. The role seeds the seat's SOUL.md and heartbeat files beside the AGENTS.md you write, and turns on role-specific behaviour; use `general` only when nothing fits.
 - A proposed hire is one line: name, role, responsibility. Set `reportsTo` to the manager who will own its work, not to yourself.
 - Prefer filling a real gap over adding headcount. Before hiring, check whether an existing agent can take the work.
 - After the hire, hand it its first task through its manager, not directly, unless the Board asked otherwise.

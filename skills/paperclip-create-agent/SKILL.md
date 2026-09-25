@@ -73,7 +73,7 @@ curl -sS "$PAPERCLIP_API_URL/llms/agent-icons.txt" \
 
 ### 6. Draft the new hire config
 
-- role / title / name
+- role / title / name — `role` is a Paperclip role key (`ceo`, `chief_of_staff`, `cto`, `cmo`, `cfo`, `security`, `engineer`, `designer`, `pm`, `qa`, `devops`, `researcher`, `general`), and the server seeds that role's SOUL.md and heartbeat files beside your AGENTS.md; pick the closest match and keep `general` for seats none of them describe. `title` is the human job title.
 - icon (required in practice; pick from `/llms/agent-icons.txt`)
 - reporting line (`reportsTo`)
 - adapter type

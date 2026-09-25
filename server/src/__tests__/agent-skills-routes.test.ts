@@ -1327,6 +1327,18 @@ describe.sequential("agent skill routes", () => {
     expect(mockApprovalService.create).toHaveBeenCalledTimes(1);
   });
 
+  it("seeds role companion files beside a hirer-written AGENTS.md", async () => {
+    const app = await createApp(createDb(true));
+    const res = await request(app).post("/api/companies/company-1/agent-hires")
+      .send({ name: "Ada", role: "engineer", adapterType: "codex_local", capabilities: "Backend engineer", instructionsBundle: { files: { "AGENTS.md": "You are Ada, a backend engineer." } } });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    await vi.waitFor(() => expect(mockAgentInstructionsService.materializeManagedBundle).toHaveBeenCalled());
+    const seeded = mockAgentInstructionsService.materializeManagedBundle.mock.calls.at(-1)?.[1] as Record<string, string>;
+    expect(seeded["AGENTS.md"]).toContain("You are Ada, a backend engineer.");
+    expect(seeded["AGENTS.md"]).toContain("## Role files");
+    expect(seeded["SOUL.md"]).toContain("Software Engineer Persona");
+  });
+
   it("includes canonical desired skills in hire approvals", async () => {
     const db = createDb(true);
 

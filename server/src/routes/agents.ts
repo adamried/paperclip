@@ -227,6 +227,7 @@ import { requireOpenCodeModelId } from "@paperclipai/adapter-opencode-local/serv
 import {
   loadDefaultAgentInstructionsBundle,
   resolveDefaultAgentInstructionsBundleRole,
+  withRoleCompanionFiles,
 } from "../services/default-agent-instructions.js";
 import { buildOnboardingFirstAgentInstructionsBundle } from "../services/onboarding-first-task-assets.js";
 import { getTelemetryClient } from "../telemetry.js";
@@ -2697,8 +2698,11 @@ export function agentRoutes(
       return (updated as T | null) ?? { ...agent, adapterConfig: nextAdapterConfig };
     }
 
+    // A hirer's own files win, but the role's companion files (SOUL, HEARTBEAT,
+    // TOOLS) are seeded beside them so a role hire is never just an AGENTS.md.
     const files = input?.files
-      ?? await loadDefaultAgentInstructionsBundle(resolveDefaultAgentInstructionsBundleRole(agent.role));
+      ? await withRoleCompanionFiles(agent.role, input.files, input.entryFile ?? "AGENTS.md")
+      : await loadDefaultAgentInstructionsBundle(resolveDefaultAgentInstructionsBundleRole(agent.role));
     const materialized = await instructions.materializeManagedBundle(
       agent,
       files,

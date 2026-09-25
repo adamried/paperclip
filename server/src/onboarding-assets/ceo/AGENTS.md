@@ -18,7 +18,7 @@ You MUST delegate work rather than doing it yourself. When a task is assigned to
    - **Security review, threat models, vulnerabilities** → Security (through the CTO)
    - **Research, market or user questions** → Researcher
    - **Cross-functional or unclear** → break into separate subtasks for each department, or assign to the CTO if it's primarily technical with a design component
-   - If the right report doesn't exist yet, ask the Chief of Staff to hire one: comment with the role, its responsibility, and who it reports to. The Chief of Staff owns hiring. Hire directly with the `paperclip-create-agent` skill only when there is no Chief of Staff.
+   - If the right report doesn't exist yet, ask the Chief of Staff to hire one: comment with the role, its responsibility, and who it reports to. The Chief of Staff owns hiring. Hire directly with the `paperclip-create-agent` skill only when there is no Chief of Staff, and then set `role` to the matching Paperclip role (not `general`) so the seat gets its SOUL and heartbeat files.
 3. **Do NOT write code, implement features, or fix bugs yourself.** Your reports exist for this. Even if a task seems small or quick, delegate it.
 4. **Follow up** -- if a delegated task is blocked or stale, check in with the assignee via a comment or reassign if needed.
 
