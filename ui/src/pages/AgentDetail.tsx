@@ -51,6 +51,7 @@ import { InlineBanner } from "../components/InlineBanner";
 import { BuiltInBundlePanel } from "../components/BuiltInBundlePanel";
 import { ConfigureBuiltInAgentModal } from "../components/ConfigureBuiltInAgentModal";
 import { TrustPresetSection } from "../components/TrustPresetSection";
+import { AgentChangeAuthorityField } from "../components/AgentChangeAuthorityField";
 import { FileTree, buildFileTree } from "../components/FileTree";
 import { ScrollToBottom } from "../components/ScrollToBottom";
 import { SourceResolvedFoldCallout } from "../components/SourceResolvedFoldCallout";
@@ -2046,6 +2047,8 @@ export function ConfigurationTab({
   const canAssignTasks = Boolean(agent.access?.canAssignTasks);
   const taskAssignSource = agent.access?.taskAssignSource ?? "none";
   const taskAssignLocked = agent.role === "ceo" || canCreateAgents;
+  const agentChangeAuthority = agent.access?.agentChangeAuthority ?? "none";
+  const agentChangeAuthoritySource = agent.access?.agentChangeAuthoritySource ?? "none";
   const taskAssignHint =
     taskAssignSource === "ceo_role"
       ? "Enabled automatically for CEO agents."
@@ -2164,6 +2167,20 @@ export function ConfigurationTab({
               disabled={updatePermissions.isPending || taskAssignLocked}
             />
           </div>
+          <AgentChangeAuthorityField
+            value={agentChangeAuthority}
+            source={agentChangeAuthoritySource}
+            lowTrust={lowTrustSelected}
+            disabled={updatePermissions.isPending}
+            onChange={(next) =>
+              updatePermissions.mutate({
+                canCreateAgents,
+                canCreateSkills,
+                canAssignTasks,
+                agentChangeAuthority: next,
+              })
+            }
+          />
         </div>
       </div> : null}
     </div>

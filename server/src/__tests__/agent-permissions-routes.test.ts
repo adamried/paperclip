@@ -1818,6 +1818,185 @@ describe.sequential("agent permission routes", () => {
     expect(res.body.permissions.canCreateSkills).toBe(false);
   });
 
+  it("writes change-authority grants for a board direct level and keeps the field out of the permissions JSON", async () => {
+    mockAgentService.updatePermissions.mockResolvedValue({ ...baseAgent, role: "chief_of_staff", reportsTo: "ceo-agent" });
+    mockAccessService.listPrincipalGrants.mockResolvedValue([
+      { permissionKey: "tasks:assign", scope: null },
+      { permissionKey: "agents:configure", scope: null },
+    ]);
+
+    const app = await createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      companyIds: [companyId],
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/permissions`)
+      .send({ canCreateAgents: false, canAssignTasks: true, agentChangeAuthority: "direct" }));
+
+    expect(res.status).toBe(200);
+    expect(mockAgentService.updatePermissions).toHaveBeenCalledWith(agentId, {
+      canCreateAgents: false,
+      canAssignTasks: true,
+    });
+    expect(mockAccessService.setPrincipalPermission).toHaveBeenCalledWith(
+      companyId, "agent", agentId, "agents:configure", true, "board-user",
+    );
+    expect(mockAccessService.setPrincipalPermission).toHaveBeenCalledWith(
+      companyId, "agent", agentId, "agents:suggest-changes", false, "board-user",
+    );
+    expect(res.body.access.agentChangeAuthority).toBe("direct");
+    expect(res.body.access.agentChangeAuthoritySource).toBe("explicit_grant");
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "agent.permissions_updated",
+      details: expect.objectContaining({
+        agentChangeAuthority: "direct",
+        agentChangeAuthoritySource: "explicit_grant",
+      }),
+    }));
+  });
+
+  it("writes only the suggest grant for a board suggest level", async () => {
+    mockAgentService.updatePermissions.mockResolvedValue({ ...baseAgent, role: "chief_of_staff", reportsTo: "ceo-agent" });
+    mockAccessService.listPrincipalGrants.mockResolvedValue([
+      { permissionKey: "agents:suggest-changes", scope: null },
+    ]);
+
+    const app = await createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      companyIds: [companyId],
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/permissions`)
+      .send({ canCreateAgents: false, canAssignTasks: true, agentChangeAuthority: "suggest" }));
+
+    expect(res.status).toBe(200);
+    expect(mockAccessService.setPrincipalPermission).toHaveBeenCalledWith(
+      companyId, "agent", agentId, "agents:configure", false, "board-user",
+    );
+    expect(mockAccessService.setPrincipalPermission).toHaveBeenCalledWith(
+      companyId, "agent", agentId, "agents:suggest-changes", true, "board-user",
+    );
+    expect(res.body.access.agentChangeAuthority).toBe("suggest");
+    expect(res.body.access.agentChangeAuthoritySource).toBe("explicit_grant");
+  });
+
+  it("clears both change grants for a board none level", async () => {
+    mockAgentService.updatePermissions.mockResolvedValue({ ...baseAgent, role: "chief_of_staff", reportsTo: "ceo-agent" });
+    mockAccessService.listPrincipalGrants.mockResolvedValue([]);
+
+    const app = await createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      companyIds: [companyId],
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/permissions`)
+      .send({ canCreateAgents: false, canAssignTasks: true, agentChangeAuthority: "none" }));
+
+    expect(res.status).toBe(200);
+    expect(mockAccessService.setPrincipalPermission).toHaveBeenCalledWith(
+      companyId, "agent", agentId, "agents:configure", false, "board-user",
+    );
+    expect(mockAccessService.setPrincipalPermission).toHaveBeenCalledWith(
+      companyId, "agent", agentId, "agents:suggest-changes", false, "board-user",
+    );
+    expect(res.body.access.agentChangeAuthority).toBe("none");
+    expect(res.body.access.agentChangeAuthoritySource).toBe("none");
+  });
+
+  it("leaves change grants untouched when agentChangeAuthority is omitted", async () => {
+    mockAgentService.updatePermissions.mockResolvedValue({ ...baseAgent });
+    mockAccessService.listPrincipalGrants.mockResolvedValue([
+      { permissionKey: "agents:suggest-changes", scope: null },
+    ]);
+
+    const app = await createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      companyIds: [companyId],
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/permissions`)
+      .send({ canCreateAgents: false, canAssignTasks: true }));
+
+    expect(res.status).toBe(200);
+    expect(mockAccessService.setPrincipalPermission).toHaveBeenCalledTimes(1);
+    expect(mockAccessService.setPrincipalPermission).toHaveBeenCalledWith(
+      companyId, "agent", agentId, "tasks:assign", true, "board-user",
+    );
+    expect(res.body.access.agentChangeAuthority).toBe("suggest");
+  });
+
+  it("rejects agentChangeAuthority from a CEO agent actor without touching permissions", async () => {
+    mockAgentService.getById.mockImplementation(async (id: string) =>
+      id === "ceo-agent"
+        ? { ...baseAgent, id: "ceo-agent", role: "ceo", permissions: { canCreateAgents: true } }
+        : { ...baseAgent });
+
+    const app = await createApp({
+      type: "agent",
+      agentId: "ceo-agent",
+      companyId,
+      runId: "run-1",
+      source: "agent_key",
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/permissions`)
+      .send({ canCreateAgents: false, canAssignTasks: true, agentChangeAuthority: "direct" }));
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("Only board users can change agent change authority");
+    expect(mockAgentService.updatePermissions).not.toHaveBeenCalled();
+    expect(mockAccessService.setPrincipalPermission).not.toHaveBeenCalled();
+  });
+
+  it("reports the root CEO level as an automatic default and refuses to lower it", async () => {
+    const rootCeo = { ...baseAgent, role: "ceo", reportsTo: null, permissions: { canCreateAgents: true } };
+    mockAgentService.getById.mockResolvedValue(rootCeo);
+    mockAgentService.updatePermissions.mockResolvedValue(rootCeo);
+    mockAccessService.listPrincipalGrants.mockResolvedValue([
+      { permissionKey: "agents:configure", scope: null },
+      { permissionKey: "skills:create", scope: null },
+    ]);
+
+    const app = await createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      companyIds: [companyId],
+    });
+
+    const detail = await requestApp(app, (baseUrl) => request(baseUrl).get(`/api/agents/${agentId}`));
+    expect(detail.status).toBe(200);
+    expect(detail.body.access.agentChangeAuthority).toBe("direct");
+    expect(detail.body.access.agentChangeAuthoritySource).toBe("root_ceo_default");
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/permissions`)
+      .send({ canCreateAgents: true, canAssignTasks: true, agentChangeAuthority: "suggest" }));
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe("agent_change_authority_locked");
+    expect(mockAgentService.updatePermissions).not.toHaveBeenCalled();
+    expect(mockAccessService.setPrincipalPermission).not.toHaveBeenCalled();
+  });
+
   it("rejects CEO permission updates outside the caller company scope", async () => {
     const app = await createApp({
       type: "agent",

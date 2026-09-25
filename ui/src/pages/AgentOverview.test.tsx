@@ -36,7 +36,7 @@ describe("AgentOverview", () => {
       adapterConfig: { model: "gpt-5.6-sol" },
       runtimeConfig: {},
       chainOfCommand: [],
-      access: { canAssignTasks: true, taskAssignSource: "explicit_grant", membership: null, grants: [] },
+      access: { canAssignTasks: true, taskAssignSource: "explicit_grant", agentChangeAuthority: "none", agentChangeAuthoritySource: "none", membership: null, grants: [] },
     } as unknown as AgentDetail;
     const issue = {
       id: "issue-1",

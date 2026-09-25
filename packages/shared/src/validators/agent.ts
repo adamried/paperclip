@@ -1,6 +1,7 @@
 import { aiConnectionBindingSchema } from "../ai-connections.js";
 import { z } from "zod";
 import {
+  AGENT_CHANGE_AUTHORITY_LEVELS,
   AGENT_ICON_NAMES,
   AGENT_ROLES,
   AGENT_STATUSES,
@@ -283,6 +284,10 @@ export const updateAgentPermissionsSchema = z.object({
   canAssignTasks: z.boolean(),
   trustPreset: trustPresetSchema.optional(),
   authorizationPolicy: trustAuthorizationPolicySchema.optional(),
+  // Omitted means "leave the agents:configure / agents:suggest-changes grants
+  // as they are"; the route writes grant rows for it and never persists it in
+  // the permissions JSON.
+  agentChangeAuthority: z.enum(AGENT_CHANGE_AUTHORITY_LEVELS).optional(),
 });
 
 export type UpdateAgentPermissions = z.infer<typeof updateAgentPermissionsSchema>;

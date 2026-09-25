@@ -29,6 +29,8 @@ const agentDetailFixture: AgentDetailRecord = {
   access: {
     canAssignTasks: true,
     taskAssignSource: "explicit_grant",
+    agentChangeAuthority: "none",
+    agentChangeAuthoritySource: "none",
     membership: null,
     grants: [],
   },

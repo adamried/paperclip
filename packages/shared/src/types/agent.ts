@@ -1,6 +1,8 @@
 import type { AiConnectionLoginIntent } from "../ai-connections.js";
 import type {
   AgentAdapterType,
+  AgentChangeAuthority,
+  AgentChangeAuthoritySource,
   PauseReason,
   AgentRole,
   AgentStatus,
@@ -62,6 +64,8 @@ export interface AgentInstructionsBundle {
 export interface AgentAccessState {
   canAssignTasks: boolean;
   taskAssignSource: "simple_default" | "explicit_grant" | "agent_creator" | "ceo_role" | "none";
+  agentChangeAuthority: AgentChangeAuthority;
+  agentChangeAuthoritySource: AgentChangeAuthoritySource;
   membership: CompanyMembership | null;
   grants: PrincipalPermissionGrant[];
 }

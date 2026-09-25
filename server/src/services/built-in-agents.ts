@@ -20,6 +20,10 @@ import {
 import { companySkillService } from "./company-skills.js";
 import { routineService } from "./routines.js";
 import { accessService } from "./access.js";
+import {
+  BUILT_IN_AGENT_DEFAULT_GRANTS,
+  ROOT_AGENT_DEFAULT_CHANGE_GRANTS,
+} from "./agent-change-authority.js";
 import { listAdapterModels } from "../adapters/registry.js";
 import {
   resourceStatus,
@@ -477,10 +481,9 @@ const DEFINITIONS_BY_KEY = new Map(DEFINITIONS.map((definition) => [definition.k
 // seeded. Add a definition key here to restore automatic provisioning.
 const AUTO_PROVISION_ON_COMPANY_CREATE_KEYS = new Set<string>([]);
 
-const ROOT_AGENT_DEFAULT_CHANGE_GRANTS: PermissionKey[] = ["agents:configure", "skills:create"];
-const BUILT_IN_AGENT_DEFAULT_GRANTS: Record<string, PermissionKey[]> = {
-  "reflection-coach": ["agents:suggest-changes", "skills:suggest-changes"],
-};
+// The default change grants live in agent-change-authority.ts so the
+// permissions route can derive and lock the Board-facing level without
+// importing this service.
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

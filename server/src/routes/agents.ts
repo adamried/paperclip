@@ -66,6 +66,12 @@ import { trackAgentCreated } from "@paperclipai/shared/telemetry";
 import { validate } from "../middleware/validate.js";
 import { agentInstructionsBundleMode } from "../services/agent-instructions.js";
 import {
+  agentChangeAuthorityFloor,
+  compareAgentChangeAuthority,
+  deriveAgentChangeAuthority,
+  grantWritesForAgentChangeAuthority,
+} from "../services/agent-change-authority.js";
+import {
   agentService,
   agentInstructionsService,
   accessService,
@@ -1566,11 +1572,13 @@ export function agentRoutes(
       ? await access.listPrincipalGrants(agent.companyId, "agent", agent.id)
       : [];
     const hasExplicitTaskAssignGrant = grants.some((grant) => grant.permissionKey === "tasks:assign");
+    const changeAuthority = deriveAgentChangeAuthority(agent, grants);
 
     if (agent.role === "ceo") {
       return {
         canAssignTasks: true,
         taskAssignSource: "ceo_role" as const,
+        ...changeAuthority,
         membership,
         grants,
       };
@@ -1580,6 +1588,7 @@ export function agentRoutes(
       return {
         canAssignTasks: true,
         taskAssignSource: "agent_creator" as const,
+        ...changeAuthority,
         membership,
         grants,
       };
@@ -1589,6 +1598,7 @@ export function agentRoutes(
       return {
         canAssignTasks: true,
         taskAssignSource: "explicit_grant" as const,
+        ...changeAuthority,
         membership,
         grants,
       };
@@ -1598,6 +1608,7 @@ export function agentRoutes(
       return {
         canAssignTasks: true,
         taskAssignSource: "simple_default" as const,
+        ...changeAuthority,
         membership,
         grants,
       };
@@ -1606,6 +1617,7 @@ export function agentRoutes(
     return {
       canAssignTasks: false,
       taskAssignSource: "none" as const,
+      ...changeAuthority,
       membership,
       grants,
     };
@@ -4892,6 +4904,11 @@ export function agentRoutes(
     const existing = await getAccessibleResource(req, res, svc.getById(id), "Agent not found");
     if (!existing) return;
 
+    // agentChangeAuthority is materialized as agents:configure /
+    // agents:suggest-changes grant rows, never stored in the permissions JSON,
+    // so it is split off before the service call.
+    const { agentChangeAuthority, ...permissionsPatch } = req.body;
+
     if (req.actor.type === "agent") {
       const actorAgent = req.actor.agentId ? await svc.getById(req.actor.agentId) : null;
       if (!actorAgent || actorAgent.companyId !== existing.companyId) {
@@ -4902,16 +4919,38 @@ export function agentRoutes(
         res.status(403).json({ error: "Only CEO can manage permissions" });
         return;
       }
+      // agents:configure lets its holder rewrite any agent's profile,
+      // instructions, and lifecycle company-wide, and agents:suggest-changes is
+      // consent-gated. Letting an agent hand either out would let any agent
+      // route around that gate through the CEO, so only the Board sets it.
+      if (agentChangeAuthority !== undefined) {
+        res.status(403).json({ error: "Only board users can change agent change authority" });
+        return;
+      }
     } else {
       await assertBoardCanManageAgentsForCompany(req, existing.companyId);
     }
 
-    const agent = await svc.updatePermissions(id, req.body);
+    if (agentChangeAuthority !== undefined) {
+      // The reconcile loop re-ensures default change grants for the root CEO
+      // and bundled built-ins on every agent create and at startup, so a
+      // downgrade below that floor would silently revert. Refuse it instead.
+      const floor = agentChangeAuthorityFloor(existing);
+      if (compareAgentChangeAuthority(agentChangeAuthority, floor) < 0) {
+        throw conflict(
+          `This agent receives "${floor}" agent change authority automatically and cannot be lowered below it`,
+          { code: "agent_change_authority_locked", agentId: id, floor },
+        );
+      }
+    }
+
+    const agent = await svc.updatePermissions(id, permissionsPatch);
     if (!agent) {
       res.status(404).json({ error: "Agent not found" });
       return;
     }
 
+    const grantedByUserId = req.actor.type === "board" ? (req.actor.userId ?? null) : null;
     const effectiveCanAssignTasks =
       agent.role === "ceo" || Boolean(agent.permissions?.canCreateAgents) || req.body.canAssignTasks;
     await access.ensureMembership(agent.companyId, "agent", agent.id, "member", "active");
@@ -4921,9 +4960,22 @@ export function agentRoutes(
       agent.id,
       "tasks:assign",
       effectiveCanAssignTasks,
-      req.actor.type === "board" ? (req.actor.userId ?? null) : null,
+      grantedByUserId,
     );
+    if (agentChangeAuthority !== undefined) {
+      for (const write of grantWritesForAgentChangeAuthority(agentChangeAuthority)) {
+        await access.setPrincipalPermission(
+          agent.companyId,
+          "agent",
+          agent.id,
+          write.permissionKey,
+          write.enabled,
+          grantedByUserId,
+        );
+      }
+    }
 
+    const detail = await buildAgentDetail(agent);
     const actor = getActorInfo(req);
     await logActivity(db, {
       companyId: agent.companyId,
@@ -4940,10 +4992,12 @@ export function agentRoutes(
         canCreateSkills: agent.permissions?.canCreateSkills ?? true,
         canAssignTasks: effectiveCanAssignTasks,
         trustPreset: agent.permissions?.trustPreset ?? "standard",
+        agentChangeAuthority: detail.access.agentChangeAuthority,
+        agentChangeAuthoritySource: detail.access.agentChangeAuthoritySource,
       },
     });
 
-    res.json(await buildAgentDetail(agent));
+    res.json(detail);
   });
 
   router.patch("/agents/:id/instructions-path", validate(updateAgentInstructionsPathSchema), async (req, res) => {

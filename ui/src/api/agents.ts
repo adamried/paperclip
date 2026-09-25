@@ -1,5 +1,6 @@
 import type {
   Agent,
+  AgentChangeAuthority,
   AgentDesiredSkillEntry,
   AgentSkillAssignmentMode,
   AgentPermissions,
@@ -80,6 +81,8 @@ export interface AgentPermissionUpdate {
   canAssignTasks: boolean;
   trustPreset?: AgentPermissions["trustPreset"];
   authorizationPolicy?: AgentPermissions["authorizationPolicy"];
+  /** Omitted leaves the agents:configure / agents:suggest-changes grants unchanged. */
+  agentChangeAuthority?: AgentChangeAuthority;
 }
 
 export interface AgentWakeRequest {

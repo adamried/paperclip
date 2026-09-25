@@ -575,6 +575,7 @@ Detailed ownership, execution, blocker, active-run watchdog, crash-recovery, and
 | Create company | yes | no |
 | Hire/create agent | yes (direct) | request via approval |
 | Pause/resume agent | yes | pause: no; resume: direct `agents:configure` grant only |
+| Reconfigure another agent (profile, instructions, resume) | yes | none by default; Board grants `suggest` (consent-gated `agents:suggest-changes`) or `direct` (`agents:configure`) via `agentChangeAuthority` on `PATCH /agents/:agentId/permissions`; the root CEO receives `direct` automatically |
 | Create/update task | yes | yes |
 | Force reassign task | yes | limited |
 | Approve strategy/hire requests | yes | no |
@@ -591,6 +592,13 @@ agent actor calling `POST /agents/:agentId/resume` must pass the protected
 access does not bypass that decision, and `agents:suggest-changes` alone cannot
 apply the lifecycle change. Pause, clear-error, terminate, approval, and
 key-management routes remain board-only.
+
+The `agentChangeAuthority` field on `PATCH /agents/:agentId/permissions` is
+board-only: agent actors, including the CEO, receive `403` when it is present.
+The route materializes it as `agents:configure` / `agents:suggest-changes`
+grant rows and never stores it in the `permissions` JSON. Levels the reconcile
+loop re-ensures (the root CEO's `direct`, a built-in agent's default) cannot be
+lowered and return `409 agent_change_authority_locked`.
 
 ### 9.3.1 Shared default-open issue writes
 
