@@ -14,8 +14,15 @@ name: Sync upstream
 on:
   workflow_dispatch:
     inputs:
+      channel:
+        description: "Which upstream release line to take the newest tag from"
+        type: choice
+        options:
+          - stable
+          - canary
+        default: stable
       upstream_ref:
-        description: "Upstream release tag to merge (blank = newest stable v* tag)"
+        description: "Exact upstream tag to merge instead (e.g. canary/v2026.925.0-canary.2); overrides channel"
         required: false
         default: ""
       dry_run:
@@ -60,12 +67,19 @@ jobs:
         id: resolve
         env:
           REQUESTED: ${{ inputs.upstream_ref }}
+          CHANNEL: ${{ inputs.channel }}
         run: |
+          # Stable releases are plain v* tags; canaries live under canary/ and
+          # carry upstream main between stable releases. Nightlies are never
+          # picked automatically.
           if [ -n "$REQUESTED" ]; then
             ref="$REQUESTED"
+          elif [ "$CHANNEL" = "canary" ]; then
+            ref="$(git tag -l 'canary/v*' | sort -V | tail -1)"
           else
             ref="$(git tag -l 'v*' | grep -v nightly | sort -V | tail -1)"
           fi
+          echo "Channel: ${CHANNEL:-stable}; resolved tag: $ref" >> "$GITHUB_STEP_SUMMARY"
           if ! git rev-parse -q --verify "refs/tags/$ref" >/dev/null; then
             echo "::error::Upstream tag '$ref' not found"; exit 1
           fi
