@@ -136,6 +136,72 @@ describe("managed AI connections", () => {
     const listed = await service.list(companyId, userId);
     expect(listed.find((c) => c.name === "Gateway")?.baseUrl).toBe("https://gateway.example.com/");
   });
+  it("delivers one custom gateway connection to every compatible harness in its native form", async () => {
+    const userId = "gateway-provider-user";
+    await db.insert(companyMemberships).values({ companyId, principalId: userId, principalType: "user", status: "active", membershipRole: "member" });
+    const saved = await service.save(companyId, userId, { provider: "gateway", method: "api_key", ownership: "personal", name: "LiteLLM", apiKey: "gw-key", baseUrl: "https://llm.example.com/", allAgents: true, agentIds: [] }, "gw-key");
+    await service.setGatewayModels(companyId, saved.connectionId, [{ id: "kimi-k2.5", label: "Kimi K2.5" }, { id: "claude-sonnet-5", label: "Claude Sonnet 5" }]);
+    const listed = await service.list(companyId, userId);
+    expect(listed.find((c) => c.name === "LiteLLM")?.provider).toBe("gateway");
+    const binding = { provider: "gateway", method: "api_key", mode: "responsible_user" } as const;
+    const runFor = (adapterType: string, model?: string) =>
+      prepareManagedAiRuntime(db, { ...input, adapterType, binding, responsibleUserId: userId, config: { env: {}, ...(model ? { model } : {}) } });
+
+    const claude = await runFor("claude_local", "claude-sonnet-5");
+    try {
+      const env = claude.config.env as Record<string, string>;
+      expect(env.ANTHROPIC_BASE_URL).toBe("https://llm.example.com");
+      expect(env.ANTHROPIC_AUTH_TOKEN).toBe("gw-key");
+      expect(env.ANTHROPIC_API_KEY).toBe("");
+      expect(env.PAPERCLIP_GATEWAY_BASE_URL).toBe("https://llm.example.com");
+    } finally { await claude.cleanup(); }
+
+    const codex = await runFor("codex_local", "gpt-5.6-sol");
+    try {
+      const env = codex.config.env as Record<string, string>;
+      expect(env.OPENAI_BASE_URL).toBe("https://llm.example.com/v1");
+      expect(env.OPENAI_API_KEY).toBe("gw-key");
+      expect(env.CODEX_API_KEY).toBe("gw-key");
+      expect(JSON.parse(await readFile(path.join(env.CODEX_HOME, "auth.json"), "utf8"))).toEqual({ OPENAI_API_KEY: "gw-key" });
+    } finally { await codex.cleanup(); }
+
+    const opencode = await runFor("opencode_local", "gateway/qwen3-coder");
+    try {
+      const env = opencode.config.env as Record<string, string>;
+      const providers = JSON.parse(env.PAPERCLIP_OPENCODE_PROVIDERS);
+      expect(providers.gateway.npm).toBe("@ai-sdk/openai-compatible");
+      expect(providers.gateway.options).toEqual({ baseURL: "https://llm.example.com/v1", apiKey: "gw-key" });
+      // The snapshot plus the configured model, so OpenCode resolves gateway/qwen3-coder.
+      expect(Object.keys(providers.gateway.models).sort()).toEqual(["claude-sonnet-5", "kimi-k2.5", "qwen3-coder"]);
+      expect(env.OPENROUTER_API_KEY).toBe("");
+    } finally { await opencode.cleanup(); }
+
+    const pi = await runFor("pi_local", "gateway/kimi-k2.5");
+    try {
+      const env = pi.config.env as Record<string, string>;
+      const providers = JSON.parse(env.PAPERCLIP_PI_PROVIDERS);
+      expect(providers.gateway.api).toBe("openai-completions");
+      expect(providers.gateway.baseUrl).toBe("https://llm.example.com/v1");
+      expect(providers.gateway.apiKey).toBe("gw-key");
+      expect(providers.gateway.models.map((m: { id: string }) => m.id).sort()).toEqual(["claude-sonnet-5", "kimi-k2.5"]);
+    } finally { await pi.cleanup(); }
+
+    // An agent's own gateway variables never survive next to a managed connection.
+    const overridden = await prepareManagedAiRuntime(db, { ...input, adapterType: "pi_local", binding, responsibleUserId: userId, config: { env: { PAPERCLIP_PI_PROVIDERS: "{}", PAPERCLIP_CODEX_PROVIDERS: "{}" }, model: "gateway/kimi-k2.5" } });
+    try {
+      const env = overridden.config.env as Record<string, string>;
+      expect(env.PAPERCLIP_CODEX_PROVIDERS).toBe("");
+      expect(JSON.parse(env.PAPERCLIP_PI_PROVIDERS).gateway.apiKey).toBe("gw-key");
+    } finally { await overridden.cleanup(); }
+  });
+  it("verifies a gateway key at the gateway and returns its model list", async () => {
+    const request = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ id: "kimi-k2.5" }, { id: "gemma-4" }] }), { status: 200 }));
+    await expect(validateAiApiKey("gateway", "gw-key", request, "https://llm.example.com/")).resolves.toEqual([{ id: "kimi-k2.5", label: "kimi-k2.5" }, { id: "gemma-4", label: "gemma-4" }]);
+    expect(request.mock.calls[0][0]).toBe("https://llm.example.com/v1/models");
+    await expect(validateAiApiKey("gateway", "gw-key", request)).rejects.toThrow("base URL");
+    const empty = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [] }), { status: 200 }));
+    await expect(validateAiApiKey("gateway", "gw-key", empty, "https://llm.example.com")).rejects.toThrow("listed no models");
+  });
   it("has one provider default across methods, retains unavailable defaults and honors explicit account methods", async () => {
     const userId = "provider-default-user";
     await db.insert(companyMemberships).values({ companyId, principalId: userId, principalType: "user", status: "active", membershipRole: "member" });

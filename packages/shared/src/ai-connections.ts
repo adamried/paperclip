@@ -31,6 +31,7 @@ export const AI_PROVIDERS = [
   "openai",
   "openrouter",
   "xai",
+  "gateway",
 ] as const;
 export const aiProviderSchema = z.enum(AI_PROVIDERS);
 export const aiAuthMethodSchema = z.enum(["subscription", "api_key"]);
@@ -70,7 +71,35 @@ export const aiConnectionBaseUrlSchema = z
   .trim()
   .max(2048)
   .refine((value) => /^https?:\/\/[^\s/]+/.test(value), "Enter an http(s) URL");
-export const aiConnectionMetadataSchema = z.object({ ...requirement, baseUrl: aiConnectionBaseUrlSchema.optional() }).strict();
+/** One model a gateway reported, kept with the connection so runs and pickers never depend on a live catalog call. */
+export const aiGatewayModelSchema = z.object({ id: z.string().trim().min(1).max(200), label: z.string().trim().min(1).max(200) }).strict();
+export type AiGatewayModel = z.infer<typeof aiGatewayModelSchema>;
+export const aiConnectionMetadataSchema = z.object({
+  ...requirement,
+  baseUrl: aiConnectionBaseUrlSchema.optional(),
+  /** Snapshot of the gateway's model list, taken when the connection was saved or its picker last refreshed. */
+  models: z.array(aiGatewayModelSchema).max(500).optional(),
+  modelsFetchedAt: z.string().optional(),
+}).strict();
+
+/**
+ * Model ids for a custom gateway are namespaced for harnesses that address
+ * models as `provider/model` (OpenCode, Pi). Claude Code and Codex take the
+ * bare id and are pointed at the gateway through their base-URL variables.
+ */
+export const GATEWAY_PROVIDER_ID = "gateway";
+export const GATEWAY_MODEL_PREFIX = `${GATEWAY_PROVIDER_ID}/`;
+export const GATEWAY_PREFIXED_MODEL_ADAPTERS: readonly string[] = ["opencode_local", "pi_local"];
+export function stripGatewayModelPrefix(model: string): string {
+  return model.startsWith(GATEWAY_MODEL_PREFIX) ? model.slice(GATEWAY_MODEL_PREFIX.length) : model;
+}
+/** The gateway models an adapter can run, in the id form that adapter expects. */
+export function gatewayModelsForAdapter(models: readonly AiGatewayModel[], adapterType: string): AiGatewayModel[] {
+  const usable = adapterType === "claude_local" ? models.filter((m) => /claude/i.test(m.id)) : models;
+  return GATEWAY_PREFIXED_MODEL_ADAPTERS.includes(adapterType)
+    ? usable.map((m) => ({ id: `${GATEWAY_MODEL_PREFIX}${m.id}`, label: m.label }))
+    : usable.map((m) => ({ ...m }));
+}
 export type AiConnectionMetadata = z.infer<typeof aiConnectionMetadataSchema>;
 
 /** Existing integrations only. This table describes compatibility, never routing. */
@@ -113,6 +142,18 @@ export const AI_CONNECTION_CAPABILITIES: Record<
       api_key: { adapters: ["grok_local"], envKey: "XAI_API_KEY" },
     },
   },
+  // One OpenAI- and Anthropic-compatible gateway (LiteLLM, a corporate proxy)
+  // connected once and delivered to each harness in its native form. The env
+  // key is a Paperclip-owned name; the runtime maps it per adapter.
+  gateway: {
+    name: "Custom gateway",
+    methods: {
+      api_key: {
+        adapters: ["claude_local", "codex_local", "opencode_local", "pi_local"],
+        envKey: "PAPERCLIP_GATEWAY_API_KEY",
+      },
+    },
+  },
 };
 export function isAiConnectionCompatible(
   requirement: AiConnectionMetadata | AiConnectionBinding,
@@ -138,8 +179,21 @@ export function isAiConnectionCompatible(
   return (
     candidates.some((method) => method?.adapters.includes(adapterType)) &&
     (requirement.provider !== "openrouter" ||
-      (typeof model === "string" && model.startsWith("openrouter/")))
+      (typeof model === "string" && model.startsWith("openrouter/"))) &&
+    (requirement.provider !== GATEWAY_PROVIDER_ID || gatewayModelFitsAdapter(adapterType, model))
   );
+}
+/**
+ * A gateway serves many vendors' models under one key; the harness decides
+ * which it can run. OpenCode and Pi address gateway models as `gateway/<id>`,
+ * and Claude Code can only drive Claude models. An unset model passes so a
+ * binding can be chosen before the model.
+ */
+export function gatewayModelFitsAdapter(adapterType: string, model: unknown): boolean {
+  if (typeof model !== "string" || model.trim().length === 0) return true;
+  if (GATEWAY_PREFIXED_MODEL_ADAPTERS.includes(adapterType)) return model.startsWith(GATEWAY_MODEL_PREFIX);
+  if (adapterType === "claude_local") return /claude/i.test(model);
+  return true;
 }
 export type AiConnectionUnavailableReason =
   | "responsible_user_missing"
@@ -196,6 +250,8 @@ export const createAiConnectionSchema = z
   .superRefine((v, ctx) => {
     if (!AI_CONNECTION_CAPABILITIES[v.provider].methods[v.method])
       ctx.addIssue({ code: "custom", message: "Unsupported sign-in method" });
+    if (v.provider === GATEWAY_PROVIDER_ID && !v.baseUrl)
+      ctx.addIssue({ code: "custom", message: "A custom gateway needs its base URL", path: ["baseUrl"] });
     if (
       v.method === "api_key"
         ? !v.apiKey || Boolean(v.loginSessionId)

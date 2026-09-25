@@ -21,9 +21,12 @@ import {
   type AiConnectionLoginIntent,
   type AiProvider,
   type AiConnectionBinding,
+  GATEWAY_PROVIDER_ID,
+  type AiGatewayModel,
 } from "@paperclipai/shared";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
 import { forbidden, notFound, unprocessable } from "../errors.js";
+import { parseGatewayModels } from "../services/ai-gateway-models.js";
 import { accessService } from "../services/access.js";
 import { logActivity } from "../services/activity-log.js";
 import { aiConnectionService } from "../services/ai-connections.js";
@@ -133,23 +136,30 @@ export async function canInstallSharedAiConnectionForNewAgent(
 }
 
 /** Fixed provider endpoints; credentials are never sent to a caller-supplied URL or through a redirect. */
+/**
+ * Verify an API key at the endpoint a run will use. For a custom gateway the
+ * verification response is the gateway's model list, which is returned so the
+ * caller can store it with the connection; every other provider resolves to an
+ * empty list.
+ */
 export async function validateAiApiKey(
   provider: AiProvider,
   key: string,
   request: typeof fetch = fetch,
   baseUrl?: string,
-) {
-  const endpoints = {
+): Promise<AiGatewayModel[]> {
+  const endpoints: Record<string, string> = {
     anthropic: "https://api.anthropic.com/v1/models?limit=1",
     openai: "https://api.openai.com/v1/models",
     openrouter: "https://openrouter.ai/api/v1/key",
     xai: "https://api.x.ai/v1/models",
   };
+  if (provider === GATEWAY_PROVIDER_ID && !baseUrl) throw unprocessable("A custom gateway needs its base URL.");
   // A gateway fronts the vendor API under its own host. Verify the key where
   // it will be used; a gateway key is not valid at the vendor. Gateways differ
   // in which auth header they read, so send both forms.
   const gateway = baseUrl && provider !== "openrouter" ? baseUrl.replace(/\/+$/, "") : null;
-  const endpoint = gateway ? `${gateway}/v1/models${provider === "anthropic" ? "?limit=1" : ""}` : endpoints[provider];
+  const endpoint = gateway ? `${gateway}/v1/models${provider === "anthropic" ? "?limit=1" : ""}` : endpoints[provider]!;
   let response: Response;
   try {
     response = await request(endpoint, {
@@ -164,13 +174,21 @@ export async function validateAiApiKey(
   } catch {
     throw unprocessable("Could not verify the account. Try again.");
   }
-  await response.body?.cancel();
-  if (!response.ok)
+  if (!response.ok) {
+    await response.body?.cancel();
     throw unprocessable(
       response.status === 401 || response.status === 403
         ? "The provider rejected this API key."
         : "The provider could not verify this account. Try again.",
     );
+  }
+  if (provider !== GATEWAY_PROVIDER_ID) {
+    await response.body?.cancel();
+    return [];
+  }
+  const models = parseGatewayModels(await response.json().catch(() => null));
+  if (models.length === 0) throw unprocessable("The gateway accepted the key but listed no models. Check the base URL points at the gateway's API root.");
+  return models;
 }
 
 export function aiConnectionRoutes(db: Db, options: Parameters<typeof supportsLocalAiLogin>[0] = {}) {
@@ -304,7 +322,7 @@ export function aiConnectionRoutes(db: Db, options: Parameters<typeof supportsLo
           "Use the existing provider sign-in flow to connect a subscription",
         );
       const attemptStartedAt = new Date();
-      await validateAiApiKey(input.provider, input.apiKey!, fetch, input.baseUrl);
+      const gatewayModels = await validateAiApiKey(input.provider, input.apiKey!, fetch, input.baseUrl);
       const result = await service.save(
         companyId,
         userId,
@@ -313,6 +331,7 @@ export function aiConnectionRoutes(db: Db, options: Parameters<typeof supportsLo
         undefined,
         attemptStartedAt,
       );
+      if (input.provider === GATEWAY_PROVIDER_ID) await service.setGatewayModels(companyId, result.connectionId, gatewayModels);
       res.status(201).json(result);
     },
   );

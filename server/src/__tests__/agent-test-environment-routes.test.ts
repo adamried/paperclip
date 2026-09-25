@@ -303,7 +303,9 @@ describe("agent test-environment route", () => {
       expect(res.body.status).toBe("pass");
       expect(JSON.stringify(res.body)).not.toContain("ai_connection_validation_incomplete");
       expect(res.body.checks.map((check: { code: string }) => check.code)).toContain("ai_connection_api_key_reverified");
-      expect(mockValidateAiApiKey).toHaveBeenCalledWith("anthropic", "sk-ant-test-key");
+      // The route verifies at the run's own endpoint: it passes fetch and the
+      // gateway URL from the run env (none here) alongside the key.
+      expect(mockValidateAiApiKey).toHaveBeenCalledWith("anthropic", "sk-ant-test-key", expect.any(Function), undefined);
       expect(testEnvironmentSpy).toHaveBeenCalledTimes(1);
       expect(cliProbeSpy).not.toHaveBeenCalled();
     } finally {

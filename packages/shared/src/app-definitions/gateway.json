@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "slug": "gateway",
+  "name": "Custom gateway",
+  "description": "Connect one OpenAI- and Anthropic-compatible gateway (LiteLLM, a corporate proxy) and use its models from Claude Code, Codex, OpenCode and Pi.",
+  "categories": [
+    "ai"
+  ],
+  "branding": {
+    "logoUrl": "/brands/apps/api-key-generic.svg"
+  },
+  "urlPatterns": [],
+  "methods": [
+    {
+      "key": "ai-api_key",
+      "label": "Gateway API key",
+      "purpose": "ai",
+      "transport": "runtime_auth",
+      "auth": "api_key",
+      "ai": {
+        "provider": "gateway",
+        "method": "api_key"
+      },
+      "grantKinds": [
+        "user",
+        "organization"
+      ],
+      "ownershipModes": [
+        "customer"
+      ],
+      "whenToUse": "Route an agent's model calls through the gateway.",
+      "guidanceMd": "The gateway decides which models the key may use. Its model list is read when the connection is saved and again on refresh.",
+      "riskTier": "S3",
+      "credentialFields": [
+        {
+          "key": "baseUrl",
+          "label": "Gateway base URL",
+          "type": "text",
+          "required": true,
+          "placeholder": "https://gateway.example.com",
+          "secret": false
+        },
+        {
+          "key": "apiKey",
+          "label": "API key",
+          "type": "password",
+          "required": true,
+          "placeholder": "Enter API key",
+          "secret": true
+        }
+      ],
+      "keyPlacement": {
+        "location": "env",
+        "name": "PAPERCLIP_GATEWAY_API_KEY"
+      }
+    }
+  ]
+}

@@ -574,6 +574,9 @@ const ACPX_INHERITED_PROVIDER_ENV_KEYS: Readonly<Record<string, ReadonlySet<stri
   codex: new Set([
     "OPENAI_API_KEY",
     "CODEX_API_KEY",
+    // A custom gateway connection points Codex's built-in OpenAI provider at
+    // the gateway's OpenAI-compatible endpoint.
+    "OPENAI_BASE_URL",
     // Which Codex binary codex-acp launches; Paperclip points it at the host CLI.
     "CODEX_PATH",
   ]),

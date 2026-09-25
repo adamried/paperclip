@@ -1,12 +1,15 @@
 import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AI_CONNECTION_CAPABILITIES,
   aiConnectionBindingSchema,
   isAiConnectionCompatible,
   type AiConnectionBinding,
   type AiAuthMethod,
   type AiProvider,
 } from "@paperclipai/shared";
+import { AI_PROVIDERS } from "./model";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { aiConnectionsApi } from "@/api/ai-connections";
 import { AiConnectionPicker } from "./AiConnectionPicker";
 import { AiConnectionLegacyNotice } from "./AiConnectionManagement";
@@ -21,9 +24,8 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 
-export function aiProviderForAdapter(
-  adapterType: string,
-): AiProvider | undefined {
+/** The vendor provider a harness signs in with natively, when it has one. */
+function nativeAiProviderForAdapter(adapterType: string): AiProvider | undefined {
   return (
     {
       claude_local: "anthropic",
@@ -32,6 +34,23 @@ export function aiProviderForAdapter(
       grok_local: "xai",
     } as Record<string, AiProvider>
   )[adapterType];
+}
+/**
+ * Every provider whose connections this harness can run: its native vendor
+ * first, then a custom gateway when the gateway capability lists the harness.
+ */
+export function aiProvidersForAdapter(adapterType: string): AiProvider[] {
+  const providers: AiProvider[] = [];
+  const native = nativeAiProviderForAdapter(adapterType);
+  if (native) providers.push(native);
+  if (AI_CONNECTION_CAPABILITIES.gateway.methods.api_key?.adapters.includes(adapterType)) providers.push("gateway");
+  return providers;
+}
+/** The provider a harness's connection field opens on. */
+export function aiProviderForAdapter(
+  adapterType: string,
+): AiProvider | undefined {
+  return aiProvidersForAdapter(adapterType)[0];
 }
 export function AiConnectionField({
   companyId,
@@ -56,7 +75,11 @@ export function AiConnectionField({
   legacy?: boolean;
   readOnly?: boolean;
 }) {
-  const provider = aiProviderForAdapter(adapterType);
+  const providers = aiProvidersForAdapter(adapterType);
+  // The binding's own provider wins so an agent on a gateway opens on it; a
+  // fresh field opens on the harness's native vendor.
+  const [chosenProvider, setChosenProvider] = useState<AiProvider | undefined>();
+  const provider = (value?.provider && providers.includes(value.provider) ? value.provider : undefined) ?? chosenProvider ?? providers[0];
   const returnFocus = useRef<HTMLElement | null>(null);
   const restoreFocus = (event: Event) => { event.preventDefault(); returnFocus.current?.focus(); };
   const [adopting, setAdopting] = useState(false);
@@ -85,6 +108,15 @@ export function AiConnectionField({
     );
   return (
     <div className="space-y-4">
+      {providers.length > 1 && !readOnly && (
+        <label className="block space-y-2 text-sm">
+          <span className="text-muted-foreground">Provider</span>
+          <Select value={provider} onValueChange={(next) => { setChosenProvider(next as AiProvider); if (value && value.provider !== next) changeBinding({ provider: next as AiProvider, method: "api_key", mode: "responsible_user" }); }}>
+            <SelectTrigger aria-label="AI provider" className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>{providers.map((candidate) => <SelectItem key={candidate} value={candidate}>{AI_PROVIDERS[candidate].name}</SelectItem>)}</SelectContent>
+          </Select>
+        </label>
+      )}
       {value && (adapterType !== "opencode_local" || Boolean(model)) && !isAiConnectionCompatible(value, adapterType, model) && (
         <p role="alert" className="text-sm text-destructive">
           This connection does not support the current harness and model. Choose
@@ -160,7 +192,7 @@ export function AiConnectionField({
             companyId={companyId}
             provider={provider}
             initialMethod={method}
-            name={`My ${provider === "anthropic" ? "Claude" : provider === "openai" ? "OpenAI" : provider === "xai" ? "Grok" : "OpenRouter"} ${method === "subscription" ? "subscription" : "API"}`}
+            name={`My ${AI_PROVIDERS[provider].name} ${method === "subscription" ? "subscription" : "API"}`}
             ownership="personal"
             agentIds={agentId ? [agentId] : []}
             allAgents={false}

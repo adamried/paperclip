@@ -459,6 +459,12 @@
       "aliases": [
         "jam"
       ]
+    },
+    {
+      "slug": "gateway",
+      "provider": "Custom gateway",
+      "catalogVisible": true,
+      "localAsset": "/brands/apps/api-key-generic.svg"
     }
   ]
 }

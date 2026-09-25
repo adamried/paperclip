@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type AiProvider, type AiAuthMethod, type AiConnectionLoginIntent } from "@paperclipai/shared";
 import { AgentProviderConnection } from "@/components/new-agent/AgentProviderConnection";
 import { ProviderApiKeyCard } from "@/components/AdapterLoginChrome";
+import { AI_PROVIDERS } from "./model";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -30,7 +31,7 @@ type Props = {
 
 /** Connections hosts the same provider step as agent setup, with its own save intent. */
 export function AiConnectionCredentialStep(props: Props) {
-  if (props.provider === "openrouter") return <ApiKeyConnectionStep {...props} />;
+  if (props.provider === "openrouter" || props.provider === "gateway") return <ApiKeyConnectionStep {...props} />;
   return <SubscriptionConnectionStep {...props} />;
 }
 
@@ -108,11 +109,15 @@ function ApiKeyConnectionStep({ companyId, provider, connectionId, name: initial
   return <div className="mx-auto w-full min-w-0 max-w-xl space-y-4">
     <label className="block space-y-2 text-sm">Connection name<Input value={name} onChange={(event) => setName(event.target.value)} disabled={Boolean(connectionId)} /></label>
     {save.error && <p role="alert" className="text-sm text-destructive">{save.error.message}</p>}
-    <ProviderApiKeyCard providerName="OpenRouter" value={apiKey} onChange={setApiKey} onSubmit={() => save.mutate()} disabled={save.isPending} placeholder="Enter API key here" autoFocus />
+    {provider === "gateway" && <label className="block space-y-2 text-sm">Gateway base URL
+      <Input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://gateway.example.com" disabled={save.isPending} />
+      <span className="block text-xs text-muted-foreground">The root the gateway serves its API under, without a trailing <code>/v1</code>. Paperclip verifies the key there, reads the gateway's model list, and delivers both to Claude Code, Codex, OpenCode and Pi in each harness's own form.</span>
+    </label>}
+    <ProviderApiKeyCard providerName={AI_PROVIDERS[provider].name} value={apiKey} onChange={setApiKey} onSubmit={() => save.mutate()} disabled={save.isPending} placeholder="Enter API key here" autoFocus />
     {provider !== "openrouter" && <label className="block space-y-2 text-sm">Gateway base URL (optional)
       <Input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://gateway.example.com" disabled={save.isPending} />
       <span className="block text-xs text-muted-foreground">Route this key through a LiteLLM or corporate gateway instead of the vendor API. Leave empty to use the vendor API.</span>
     </label>}
-    <div className="flex justify-between gap-2"><Button variant="ghost" onClick={onCancel}>Cancel</Button><Button disabled={!name.trim() || !apiKey.trim() || save.isPending} onClick={() => save.mutate()}>{save.isPending ? "Connecting…" : "Connect"}</Button></div>
+    <div className="flex justify-between gap-2"><Button variant="ghost" onClick={onCancel}>Cancel</Button><Button disabled={!name.trim() || !apiKey.trim() || (provider === "gateway" && !baseUrl.trim()) || save.isPending} onClick={() => save.mutate()}>{save.isPending ? "Connecting…" : "Connect"}</Button></div>
   </div>;
 }

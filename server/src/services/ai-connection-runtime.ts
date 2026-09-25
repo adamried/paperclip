@@ -7,8 +7,11 @@ import { and, eq } from "drizzle-orm";
 import { type Db, companySecrets, connectionGrants } from "@paperclipai/db";
 import {
   AI_CONNECTION_CAPABILITIES,
+  GATEWAY_PROVIDER_ID,
   aiConnectionMetadataSchema,
+  stripGatewayModelPrefix,
   type AiConnectionBinding,
+  type AiGatewayModel,
 } from "@paperclipai/shared";
 import { aiConnectionService } from "./ai-connections.js";
 import { secretService } from "./secrets.js";
@@ -49,6 +52,73 @@ export async function linkHostKeychainIntoHome(
   ];
   for (const [target, link] of links) {
     await symlink(target, link).catch(() => undefined);
+  }
+}
+
+/** The harness the runtime delivers a credential to, with the Paperclip Runner unwrapped. */
+function effectiveAdapterType(adapterType: string, config: Record<string, unknown>): string {
+  if (adapterType !== "paperclip_runner") return adapterType;
+  const provider = config.provider;
+  if (provider === "claude" || (provider === "acpx" && config.acpxAgent === "claude")) return "claude_local";
+  if (provider === "codex") return "codex_local";
+  if (provider === "opencode") return "opencode_local";
+  return adapterType;
+}
+
+/** Base URL with the OpenAI-style `/v1` path, for harnesses that expect it. */
+function openAiCompatibleBaseUrl(baseUrl: string): string {
+  const trimmed = baseUrl.replace(/\/+$/, "");
+  return /\/v1$/.test(trimmed) ? trimmed : `${trimmed}/v1`;
+}
+
+/**
+ * The environment a custom gateway connection contributes to a run, in the
+ * form the agent's harness reads. Claude Code and Codex take a base URL and a
+ * key; OpenCode and Pi need a provider declaration with an explicit model list,
+ * so the connection's model snapshot plus the configured model become that
+ * list. The key never lands in agent-visible variables under its own name.
+ */
+export function gatewayRuntimeEnv(input: {
+  adapterType: string;
+  baseUrl: string;
+  apiKey: string;
+  name: string;
+  models: readonly AiGatewayModel[];
+  configuredModel?: unknown;
+}): Record<string, string> {
+  const base = input.baseUrl.replace(/\/+$/, "");
+  const configured = typeof input.configuredModel === "string" ? stripGatewayModelPrefix(input.configuredModel.trim()) : "";
+  const models = new Map(input.models.map((m) => [m.id, m.label] as const));
+  if (configured && !models.has(configured)) models.set(configured, configured);
+  switch (input.adapterType) {
+    case "claude_local":
+      return { ANTHROPIC_BASE_URL: base, ANTHROPIC_AUTH_TOKEN: input.apiKey, ANTHROPIC_API_KEY: "" };
+    case "codex_local":
+      return { OPENAI_BASE_URL: openAiCompatibleBaseUrl(base), OPENAI_API_KEY: input.apiKey, CODEX_API_KEY: input.apiKey };
+    case "opencode_local":
+      return {
+        PAPERCLIP_OPENCODE_PROVIDERS: JSON.stringify({
+          [GATEWAY_PROVIDER_ID]: {
+            npm: "@ai-sdk/openai-compatible",
+            name: input.name,
+            options: { baseURL: openAiCompatibleBaseUrl(base), apiKey: input.apiKey },
+            models: Object.fromEntries([...models].map(([id, name]) => [id, { name }])),
+          },
+        }),
+      };
+    case "pi_local":
+      return {
+        PAPERCLIP_PI_PROVIDERS: JSON.stringify({
+          [GATEWAY_PROVIDER_ID]: {
+            baseUrl: openAiCompatibleBaseUrl(base),
+            api: "openai-completions",
+            apiKey: input.apiKey,
+            models: [...models].map(([id, name]) => ({ id, name })),
+          },
+        }),
+      };
+    default:
+      return {};
   }
 }
 
@@ -113,6 +183,10 @@ export const AI_AUTH_ENV_KEYS = [
   "OPENCODE_CONFIG",
   "OPENCODE_CONFIG_DIR",
   "PAPERCLIP_OPENCODE_PROVIDERS",
+  "PAPERCLIP_PI_PROVIDERS",
+  "PAPERCLIP_CODEX_PROVIDERS",
+  "PAPERCLIP_GATEWAY_API_KEY",
+  "PAPERCLIP_GATEWAY_BASE_URL",
   "ANTHROPIC_BASE_URL",
   "OPENAI_BASE_URL",
   "XAI_BASE_URL",
@@ -167,7 +241,9 @@ export async function assertManagedAiProjectAuth(
       ? [".claude/settings.json", ".claude/settings.local.json"]
       : provider === "openai"
         ? [".codex/config.toml"]
-        : [];
+        : provider === "gateway"
+          ? [".claude/settings.json", ".claude/settings.local.json", ".codex/config.toml"]
+          : [];
   const pattern =
     "apiKeyHelper|ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_OAUTH_TOKEN|OPENAI_API_KEY|model_provider[[:space:]]*=|env_key[[:space:]]*=|experimental_bearer_token|cli_auth_credentials_store";
   if (target?.kind === "remote" && files.length) {
@@ -370,6 +446,23 @@ export async function prepareManagedAiRuntime(
       await writeFile(authFile, JSON.stringify({ OPENAI_API_KEY: value }), {
         mode: 0o600,
       });
+    }
+    if (input.binding.provider === GATEWAY_PROVIDER_ID && metadata.success && metadata.data.baseUrl) {
+      const harness = effectiveAdapterType(input.adapterType, input.config);
+      env.PAPERCLIP_GATEWAY_BASE_URL = metadata.data.baseUrl.replace(/\/+$/, "");
+      Object.assign(
+        env,
+        gatewayRuntimeEnv({
+          adapterType: harness,
+          baseUrl: metadata.data.baseUrl,
+          apiKey: value,
+          name: selection.connection.name,
+          models: metadata.data.models ?? [],
+          configuredModel: input.config.model,
+        }),
+      );
+      if (harness === "codex_local")
+        await writeFile(authFile, JSON.stringify({ OPENAI_API_KEY: value }), { mode: 0o600 });
     }
     if (input.binding.provider === "openrouter") {
       env.OPENCODE_CONFIG_CONTENT = JSON.stringify({

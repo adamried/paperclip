@@ -50,6 +50,8 @@ import {
   submitBrowserCodeRequestSchema,
   toAccountHandle,
   type AgentAdapterType,
+  GATEWAY_PROVIDER_ID,
+  gatewayModelsForAdapter,
 } from "@paperclipai/shared";
 import {
   isForbiddenConfigEnvKey,
@@ -3238,7 +3240,16 @@ export function agentRoutes(
         ...(aiProviderSchema.safeParse(aiProvider).success ? { provider: aiProviderSchema.parse(aiProvider) } : {}),
       });
       if (source) {
-        res.json(mergeGatewayModels(await listGatewayModels(source, { refresh }), models));
+        const gatewayModels = await listGatewayModels(source, { refresh });
+        if (source.provider === GATEWAY_PROVIDER_ID) {
+          // A custom gateway is the whole catalog for its connection: no
+          // vendor list is merged in, the snapshot is refreshed from a
+          // successful fetch, and the ids take the form the harness expects.
+          if (gatewayModels.length > 0) await aiConnectionService(db).setGatewayModels(companyId, source.connectionId, gatewayModels);
+          res.json(gatewayModelsForAdapter(gatewayModels.length > 0 ? gatewayModels : source.models, modelAdapterType));
+          return;
+        }
+        res.json(mergeGatewayModels(gatewayModels, models));
         return;
       }
     }
@@ -3313,7 +3324,7 @@ export function agentRoutes(
       // A gateway-routed connection carries its base URL in the run env, and an
       // Anthropic key routed that way travels as ANTHROPIC_AUTH_TOKEN (bearer)
       // rather than ANTHROPIC_API_KEY. Verify where the run will actually go.
-      const baseUrlKey = ({ anthropic: "ANTHROPIC_BASE_URL", openai: "OPENAI_BASE_URL", xai: "XAI_BASE_URL" } as Record<string, string>)[binding.provider];
+      const baseUrlKey = ({ anthropic: "ANTHROPIC_BASE_URL", openai: "OPENAI_BASE_URL", xai: "XAI_BASE_URL", gateway: "PAPERCLIP_GATEWAY_BASE_URL" } as Record<string, string>)[binding.provider];
       const gatewayUrl = baseUrlKey ? runEnv[baseUrlKey] : undefined;
       const key = (envKey ? runEnv[envKey] : undefined) || (binding.provider === "anthropic" ? runEnv.ANTHROPIC_AUTH_TOKEN : undefined);
       try {
@@ -3327,7 +3338,7 @@ export function agentRoutes(
       return result;
     }
     if (!result.checks.some(check => check.code.includes("hello_probe"))) {
-      const providerAdapter = { anthropic: "claude_local", openai: "codex_local", openrouter: "opencode_local", xai: "grok_local" }[binding.provider];
+      const providerAdapter = { anthropic: "claude_local", openai: "codex_local", openrouter: "opencode_local", xai: "grok_local", gateway: adapterType }[binding.provider];
       const probe = await requireServerAdapter(providerAdapter).testEnvironment({ ...context, adapterType: providerAdapter, config: { ...context.config, engine: "cli" } });
       result.checks.push(...probe.checks);
       result.status = probe.status === "fail" ? "fail" : result.status === "warn" || probe.status === "warn" ? "warn" : "pass";

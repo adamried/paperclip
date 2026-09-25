@@ -29,6 +29,7 @@ import {
   type AiManagedConnectionSummary,
   type CreateAiConnection,
   type AiConnectionLoginIntent,
+  type AiGatewayModel,
 } from "@paperclipai/shared";
 import { forbidden, notFound, unprocessable } from "../errors.js";
 import { logActivity } from "./activity-log.js";
@@ -806,7 +807,7 @@ export function aiConnectionService(db: Db) {
     companyId: string,
     userId: string,
     input: { connectionId?: string; provider?: AiProvider },
-  ): Promise<{ connectionId: string; baseUrl: string; apiKey: string } | null> {
+  ): Promise<{ connectionId: string; provider: AiProvider; baseUrl: string; apiKey: string; models: AiGatewayModel[] } | null> {
     let grantId: string | undefined = undefined;
     if (!input.connectionId && input.provider) {
       const [row] = await db
@@ -830,7 +831,34 @@ export function aiConnectionService(db: Db) {
     const metadata = aiConnectionMetadataSchema.safeParse(row.connection.config.ai);
     if (!metadata.success || metadata.data.method !== "api_key" || !metadata.data.baseUrl) return null;
     const apiKey = await credential(row as unknown as Awaited<ReturnType<typeof select>>);
-    return { connectionId: row.connection.id, baseUrl: metadata.data.baseUrl, apiKey };
+    return {
+      connectionId: row.connection.id,
+      provider: metadata.data.provider,
+      baseUrl: metadata.data.baseUrl,
+      apiKey,
+      models: metadata.data.models ?? [],
+    };
   }
-  return { list, select, credential, save, setDefault, membership, gatewayModelSource };
+  /** Store the gateway's model list with the connection so pickers and runs read it without a live call. */
+  async function setGatewayModels(companyId: string, connectionId: string, models: AiGatewayModel[]) {
+    const [row] = await db
+      .select({ config: toolConnections.config })
+      .from(toolConnections)
+      .where(and(eq(toolConnections.id, connectionId), eq(toolConnections.companyId, companyId)))
+      .limit(1);
+    if (!row) return;
+    const metadata = aiConnectionMetadataSchema.safeParse(row.config.ai);
+    if (!metadata.success || metadata.data.provider !== "gateway") return;
+    await db
+      .update(toolConnections)
+      .set({
+        config: {
+          ...row.config,
+          ai: { ...metadata.data, models: models.slice(0, 500), modelsFetchedAt: new Date().toISOString() },
+        },
+        updatedAt: new Date(),
+      })
+      .where(eq(toolConnections.id, connectionId));
+  }
+  return { list, select, credential, save, setDefault, membership, gatewayModelSource, setGatewayModels };
 }
