@@ -19,6 +19,7 @@ on:
         type: choice
         options:
           - stable
+          - beta
           - canary
         default: stable
       upstream_ref:
@@ -69,13 +70,15 @@ jobs:
           REQUESTED: ${{ inputs.upstream_ref }}
           CHANNEL: ${{ inputs.channel }}
         run: |
-          # Stable releases are plain v* tags; canaries live under canary/ and
-          # carry upstream main between stable releases. Nightlies are never
-          # picked automatically.
+          # Stable releases are plain v* tags. Betas (beta/) are the builds
+          # upstream soaks before a stable; canaries (canary/) are every merge
+          # to upstream main. Nightlies are never picked automatically.
           if [ -n "$REQUESTED" ]; then
             ref="$REQUESTED"
           elif [ "$CHANNEL" = "canary" ]; then
             ref="$(git tag -l 'canary/v*' | sort -V | tail -1)"
+          elif [ "$CHANNEL" = "beta" ]; then
+            ref="$(git tag -l 'beta/v*' | sort -V | tail -1)"
           else
             ref="$(git tag -l 'v*' | grep -v nightly | sort -V | tail -1)"
           fi
