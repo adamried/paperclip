@@ -1038,11 +1038,17 @@ chief-of-staff onboarding persona.
   appear in the addressee's inbox and badge counts only; the Approvals page
   lists all.
 - **Interactions.** A human-facing issue-thread interaction created by an agent
-  with no addressee given is addressed to the person the run acts for (the
-  source run's responsible user) and otherwise to the agent's manager; an
-  explicit `null` keeps it open to the Board. The addressee is then the sole
-  human resolver, as for any addressed interaction. A defaulted addressee is
-  ignored by idempotent-retry comparison.
+  that reports to a person, with no addressee given, is addressed to the
+  person the run acts for (the source run's responsible user, if still an
+  active member) and otherwise to the agent's manager; an explicit `null`
+  keeps it open to the Board. Cards from agents that report to the Board or to
+  another agent get no default addressee. The addressee is then the sole human
+  resolver, as for any addressed interaction. A defaulted addressee is ignored
+  by idempotent-retry comparison. The formal approval for a high-risk tool
+  action uses the same default as its paired card.
+- **Agents creating agents.** An agent that hires or creates another agent may
+  make it report to the Board, to an agent, or to the acting agent's own
+  manager only (`403 agent_manager_assignment_not_allowed`).
 - **Decision policy.** `user_approval_decision_policies` holds a per-person,
   per-company choice: `any_board` (default) or `addressee_only`. Under
   `addressee_only`, every decision path (the approval routes, the pending-agent

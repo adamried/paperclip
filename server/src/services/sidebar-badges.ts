@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, not } from "drizzle-orm";
+import { loadOrgChartUserSummaries } from "./agent-manager.js";
 import type { Db } from "@paperclipai/db";
 import { agents, approvals, heartbeatRuns } from "@paperclipai/db";
 import type { SidebarBadges } from "@paperclipai/shared";
@@ -43,11 +44,18 @@ export function sidebarBadgeService(db: Db) {
             inArray(approvals.status, ACTIONABLE_APPROVAL_STATUSES),
           ),
         )
-        .then((rows) =>
-          rows.filter((row) =>
-            (row.addresseeUserId === null || row.addresseeUserId === (extra?.userId ?? null))
-            && !isDismissed(extra?.dismissals ?? new Map(), `approval:${row.id}`, row.updatedAt)).length
-        );
+        .then(async (rows) => {
+          // Addressed approvals count for their addressee only, unless that
+          // person is no longer an active member, in which case they are open
+          // to the Board again (same rule as the inbox feed).
+          const addresseeIds = [...new Set(rows.map((row) => row.addresseeUserId).filter((id): id is string => Boolean(id)))];
+          const addressees = await loadOrgChartUserSummaries(db, companyId, addresseeIds);
+          return rows.filter((row) =>
+            (row.addresseeUserId === null
+              || row.addresseeUserId === (extra?.userId ?? null)
+              || addressees.get(row.addresseeUserId)?.active === false)
+            && !isDismissed(extra?.dismissals ?? new Map(), `approval:${row.id}`, row.updatedAt)).length;
+        });
 
       const latestRunByAgent = await db
         .selectDistinctOn([heartbeatRuns.agentId], {

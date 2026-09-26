@@ -1,4 +1,5 @@
 import { and, eq, gte, sql } from "drizzle-orm";
+import { loadOrgChartUserSummaries } from "./agent-manager.js";
 import type { Db } from "@paperclipai/db";
 import { agents, approvals, companies, costEvents, heartbeatRuns, issues } from "@paperclipai/db";
 import { notFound } from "../errors.js";
@@ -51,9 +52,17 @@ export function dashboardService(db: Db) {
         .select({ addresseeUserId: approvals.addresseeUserId })
         .from(approvals)
         .where(and(eq(approvals.companyId, companyId), eq(approvals.status, "pending")))
-        // Approvals addressed to someone else are not this viewer's to decide.
-        .then((rows) => rows.filter((row) =>
-          row.addresseeUserId === null || viewerUserId === undefined || row.addresseeUserId === viewerUserId).length);
+        // Approvals addressed to someone else are not this viewer's to decide,
+        // unless the addressee is no longer an active member.
+        .then(async (rows) => {
+          if (viewerUserId === undefined) return rows.length;
+          const addresseeIds = [...new Set(rows.map((row) => row.addresseeUserId).filter((id): id is string => Boolean(id)))];
+          const addressees = await loadOrgChartUserSummaries(db, companyId, addresseeIds);
+          return rows.filter((row) =>
+            row.addresseeUserId === null
+            || row.addresseeUserId === viewerUserId
+            || addressees.get(row.addresseeUserId)?.active === false).length;
+        });
 
       const agentCounts: Record<string, number> = {
         active: 0,

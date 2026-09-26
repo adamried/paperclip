@@ -46,6 +46,7 @@ export function approvalService(db: Db) {
     targetStatus: "approved" | "rejected",
     decidedByUserId: string,
     decisionNote: string | null | undefined,
+    beforeResolve?: (existing: Awaited<ReturnType<typeof getExistingApproval>>) => Promise<void>,
   ): Promise<ResolutionResult> {
     const existing = await getExistingApproval(id);
     if (!canResolveStatuses.has(existing.status)) {
@@ -56,6 +57,9 @@ export function approvalService(db: Db) {
         `Only pending or revision requested approvals can be ${targetStatus === "approved" ? "approved" : "rejected"}`,
       );
     }
+    // Runs before the status flips, so a validation failure leaves the
+    // approval decidable instead of approved-but-unapplied.
+    if (beforeResolve) await beforeResolve(existing);
 
     const now = new Date();
     const updated = await db
@@ -146,6 +150,23 @@ export function approvalService(db: Db) {
         "approved",
         decidedByUserId,
         decisionNote,
+        async (existing) => {
+          // A hire payload can be resubmitted with bad manager fields; validate
+          // them before the approval is marked approved.
+          if (existing.type !== "hire_agent") return;
+          const payload = existing.payload as Record<string, unknown>;
+          const payloadAgentId = typeof payload.agentId === "string" ? payload.agentId : null;
+          const pendingAgent = payloadAgentId ? await agentsSvc.getById(payloadAgentId) : null;
+          if (!pendingAgent) return;
+          const managerPatch: { reportsTo?: string | null; reportsToUserId?: string | null } = {};
+          if (Object.prototype.hasOwnProperty.call(payload, "reportsTo")) {
+            managerPatch.reportsTo = typeof payload.reportsTo === "string" ? payload.reportsTo : null;
+          }
+          if (Object.prototype.hasOwnProperty.call(payload, "reportsToUserId")) {
+            managerPatch.reportsToUserId = typeof payload.reportsToUserId === "string" ? payload.reportsToUserId : null;
+          }
+          await agentsSvc.validateManagerPatch(pendingAgent.companyId, pendingAgent.id, managerPatch, pendingAgent);
+        },
       );
 
       let hireApprovedAgentId: string | null = null;

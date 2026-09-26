@@ -14,7 +14,7 @@ import {
   sql,
 } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { resolveActiveAgentManagerUserId } from "./agent-manager.js";
+import { defaultAgentCardAddressee } from "./agent-manager.js";
 import {
   agents,
   companySecretProposals,
@@ -3316,26 +3316,22 @@ export function issueThreadInteractionService(
         resolverPolicy: policy.requestedResolverPolicy,
       };
 
-      // A human-facing card from an agent with no addressee given goes to the
-      // person the run is acting for (the issue's or requester's responsible
-      // user), and only otherwise to the agent's human manager. `undefined`
-      // means "not specified"; an explicit null keeps it open to the Board.
+      // A human-facing card from an agent that reports to a person gets a
+      // default addressee (see defaultAgentCardAddressee); cards from agents
+      // that report to the Board stay open to the whole Board. `undefined`
+      // means "not specified"; an explicit null keeps it open.
       let addresseeDefaulted = false;
       if (
         actor.agentId &&
         normalizedData.addresseeAgentId == null &&
         data.addresseeUserId === undefined
       ) {
-        const runResponsibleUserId = data.sourceRunId
-          ? await db
-              .select({ responsibleUserId: heartbeatRuns.responsibleUserId })
-              .from(heartbeatRuns)
-              .where(and(eq(heartbeatRuns.id, data.sourceRunId), eq(heartbeatRuns.companyId, issue.companyId)))
-              .then((rows) => rows[0]?.responsibleUserId ?? null)
-          : null;
-        const defaultAddressee =
-          runResponsibleUserId
-          ?? (await resolveActiveAgentManagerUserId(db, issue.companyId, actor.agentId));
+        const defaultAddressee = await defaultAgentCardAddressee(
+          db,
+          issue.companyId,
+          actor.agentId,
+          data.sourceRunId ?? null,
+        );
         if (defaultAddressee) {
           normalizedData.addresseeUserId = defaultAddressee;
           addresseeDefaulted = true;

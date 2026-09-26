@@ -2046,7 +2046,7 @@ describe.sequential("agent permission routes", () => {
       source: "agent_key",
     });
 
-    for (const body of [{ reportsToUserId: "board-user" }, { reportsTo: null }]) {
+    for (const body of [{ reportsToUserId: "board-user" }, { reportsTo: "22222222-2222-4222-8222-222222222222" }]) {
       const res = await requestApp(app, (baseUrl) => request(baseUrl)
         .patch(`/api/agents/${agentId}`)
         .send(body));

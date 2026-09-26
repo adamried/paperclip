@@ -44,6 +44,7 @@ import {
   documents,
   goals,
   heartbeatRuns,
+  runIdentityContexts,
   routineRuns,
   executionWorkspaces,
   issueApprovals,
@@ -417,8 +418,12 @@ async function resolveResponsibleUserIdForIssueCreate(
 
   if (input.actorRunId) {
     const actorRun = await reader
-      .select({ responsibleUserId: heartbeatRuns.responsibleUserId })
+      .select({
+        responsibleUserId: heartbeatRuns.responsibleUserId,
+        identityCause: runIdentityContexts.cause,
+      })
       .from(heartbeatRuns)
+      .leftJoin(runIdentityContexts, eq(runIdentityContexts.id, heartbeatRuns.activeIdentityContextId))
       .where(
         and(
           eq(heartbeatRuns.companyId, companyId),
@@ -426,7 +431,11 @@ async function resolveResponsibleUserIdForIssueCreate(
         ),
       )
       .then((rows) => rows[0] ?? null);
-    if (actorRun?.responsibleUserId) return actorRun.responsibleUserId;
+    // A run acting under its agent's human manager is a per-run fallback, not
+    // an owner to stamp onto every child issue the agent creates.
+    if (actorRun?.responsibleUserId && actorRun.identityCause !== "agent_manager") {
+      return actorRun.responsibleUserId;
+    }
   }
 
   if (input.parentId) {

@@ -256,6 +256,7 @@ import {
   AGENT_PROFILE_CHANGE_CONSENT_FIELDS,
   agentInstructionsChangeTargetKey,
   agentProfileChangeTargetKey,
+  agentManagerChangeTargetKey,
   changeConsentGateService,
   touchesAgentProfileChangeConsentFields,
 } from "../services/change-consent-gate.js";
@@ -1731,6 +1732,30 @@ export function agentRoutes(
       true,
       grantedByUserId,
     );
+  }
+
+  /**
+   * An agent creating or hiring another agent may make it report to the
+   * Board, to an agent, or to the acting agent's own human manager, never to
+   * some other person: a human manager receives the new agent's escalations
+   * and lends it their identity, which only that person (or the Board) can
+   * decide.
+   */
+  async function assertAgentActorManagerAssignment(
+    req: Request,
+    companyId: string,
+    reportsToUserId: string | null | undefined,
+  ) {
+    if (req.actor.type !== "agent" || !reportsToUserId) return;
+    const ownManager = req.actor.agentId
+      ? await resolveActiveAgentManagerUserId(db, companyId, req.actor.agentId)
+      : null;
+    if (reportsToUserId !== ownManager) {
+      throw forbidden("Agents may only assign their own manager as a new agent's manager", {
+        code: "agent_manager_assignment_not_allowed",
+        reportsToUserId,
+      });
+    }
   }
 
   async function assertCanCreateAgentsForCompany(req: Request, companyId: string) {
@@ -4339,6 +4364,17 @@ export function agentRoutes(
     if (!rollbackConfig) {
       throw unprocessable("Invalid revision snapshot");
     }
+    // A rollback that restores a different manager is a manager change, with
+    // the same authority requirement as a direct PATCH (self access is not
+    // enough for an agent).
+    const rollbackReportsTo = typeof rollbackConfig.reportsTo === "string" ? rollbackConfig.reportsTo : null;
+    const rollbackReportsToUserId = typeof rollbackConfig.reportsToUserId === "string" ? rollbackConfig.reportsToUserId : null;
+    if (
+      req.actor.type === "agent" &&
+      (rollbackReportsTo !== (existing.reportsTo ?? null) || rollbackReportsToUserId !== (existing.reportsToUserId ?? null))
+    ) {
+      await assertCanApplyProtectedAgentChange(req, existing, [agentManagerChangeTargetKey(existing.id)]);
+    }
     assertProviderTraceSettingTransition(
       req,
       rollbackConfig.runtimeConfig,
@@ -4538,6 +4574,7 @@ export function agentRoutes(
       adapterConfig: normalizedAdapterConfig,
       runtimeConfig: normalizedRuntimeConfig,
     };
+    await assertAgentActorManagerAssignment(req, companyId, normalizedHireInput.reportsToUserId);
 
     const company = await db
       .select()
@@ -4756,6 +4793,7 @@ export function agentRoutes(
   router.post("/companies/:companyId/agents", validate(createAgentSchema), async (req, res) => {
     const companyId = req.params.companyId as string;
     await assertCanCreateAgentsForCompany(req, companyId);
+    await assertAgentActorManagerAssignment(req, companyId, (req.body as { reportsToUserId?: string | null }).reportsToUserId);
 
     const company = await db
       .select()
@@ -5441,11 +5479,11 @@ export function agentRoutes(
     // identity its runs use, so an agent never changes it under self access:
     // it needs a change grant (or an accepted change consent) like a profile
     // change, even on its own row.
-    if (
-      req.actor.type === "agent" &&
-      (hasOwn(patchData, "reportsTo") || hasOwn(patchData, "reportsToUserId"))
-    ) {
-      await assertCanApplyProtectedAgentChange(req, existing, [agentProfileChangeTargetKey(existing.id)]);
+    const changesManager =
+      (hasOwn(patchData, "reportsTo") && (patchData.reportsTo ?? null) !== (existing.reportsTo ?? null)) ||
+      (hasOwn(patchData, "reportsToUserId") && (patchData.reportsToUserId ?? null) !== (existing.reportsToUserId ?? null));
+    if (req.actor.type === "agent" && changesManager) {
+      await assertCanApplyProtectedAgentChange(req, existing, [agentManagerChangeTargetKey(existing.id)]);
     }
     const touchesProfileFields = touchesAgentProfileChangeConsentFields(patchData);
     const profileOnlyChange = touchesProfileFields && Object.keys(patchData).every((key) =>

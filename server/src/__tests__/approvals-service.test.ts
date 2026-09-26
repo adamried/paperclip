@@ -5,6 +5,8 @@ const mockAgentService = vi.hoisted(() => ({
   activatePendingApproval: vi.fn(),
   create: vi.fn(),
   terminate: vi.fn(),
+  getById: vi.fn(async () => null),
+  validateManagerPatch: vi.fn(async () => undefined),
 }));
 
 const mockNotifyHireApproved = vi.hoisted(() => vi.fn());

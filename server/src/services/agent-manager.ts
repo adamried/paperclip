@@ -1,6 +1,6 @@
 import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { agents, authUsers, companyMemberships } from "@paperclipai/db";
+import { agents, authUsers, companyMemberships, heartbeatRuns } from "@paperclipai/db";
 import type { ChainOfCommandRoot } from "@paperclipai/shared";
 import { unprocessable } from "../errors.js";
 import { normalizeHumanRole } from "./company-member-roles.js";
@@ -87,6 +87,36 @@ export async function resolveActiveAgentManagerUserId(
   if (!userId) return null;
   const membership = await findHumanManagerMembership(db, companyId, userId);
   return humanManagerMembershipIsActive(membership) ? userId : null;
+}
+
+/**
+ * Who a human-facing card or formal approval from an agent is addressed to
+ * when the agent did not say. Only agents with an active human manager get a
+ * default at all (everyone else's cards stay open to the Board). For those,
+ * the person the run acts for (the source run's responsible user) comes
+ * first, so a requester who assigned the work can answer; the manager is the
+ * fallback. An inactive person never becomes an addressee.
+ */
+export async function defaultAgentCardAddressee(
+  db: Db,
+  companyId: string,
+  agentId: string,
+  sourceRunId: string | null | undefined,
+): Promise<string | null> {
+  const managerUserId = await resolveActiveAgentManagerUserId(db, companyId, agentId);
+  if (!managerUserId) return null;
+  if (sourceRunId) {
+    const rows = await db
+      .select({ responsibleUserId: heartbeatRuns.responsibleUserId })
+      .from(heartbeatRuns)
+      .where(and(eq(heartbeatRuns.id, sourceRunId), eq(heartbeatRuns.companyId, companyId)));
+    const runUserId = rows[0]?.responsibleUserId ?? null;
+    if (runUserId && runUserId !== managerUserId) {
+      const membership = await findHumanManagerMembership(db, companyId, runUserId);
+      if (humanManagerMembershipIsActive(membership)) return runUserId;
+    }
+  }
+  return managerUserId;
 }
 
 /**
