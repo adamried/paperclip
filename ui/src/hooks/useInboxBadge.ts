@@ -8,6 +8,7 @@ import { authApi } from "../api/auth";
 import { dashboardApi } from "../api/dashboard";
 import { heartbeatsApi } from "../api/heartbeats";
 import { issuesApi } from "../api/issues";
+import { eligibleApprovalAddresseeIds } from "../lib/company-members";
 import { queryKeys } from "../lib/queryKeys";
 import {
   filterLocalInboxArchivedIssues,
@@ -250,6 +251,16 @@ export function useInboxBadge(companyId: string | null | undefined) {
   );
   const currentUserId = session?.user.id ?? session?.session.userId ?? null;
 
+  const { data: companyMembers } = useQuery({
+    queryKey: queryKeys.access.companyUserDirectory(companyId!),
+    queryFn: () => accessApi.listUserDirectory(companyId!),
+    enabled: !!companyId,
+  });
+  const eligibleAddresseeIds = useMemo(
+    () => eligibleApprovalAddresseeIds(companyMembers?.users),
+    [companyMembers],
+  );
+
   const { data: heartbeatRuns = [] } = useQuery({
     queryKey: [...queryKeys.heartbeats(companyId!), "limit", INBOX_BADGE_HEARTBEAT_RUN_LIMIT],
     queryFn: () => heartbeatsApi.list(companyId!, undefined, INBOX_BADGE_HEARTBEAT_RUN_LIMIT, { summary: true }),
@@ -269,7 +280,8 @@ export function useInboxBadge(companyId: string | null | undefined) {
         dismissedAlerts,
         dismissedAtByKey,
         currentUserId,
+        eligibleAddresseeIds,
       }),
-    [approvals, joinRequests, dashboard, heartbeatRuns, mineIssues, dismissedAlerts, dismissedAtByKey, currentUserId],
+    [approvals, joinRequests, dashboard, heartbeatRuns, mineIssues, dismissedAlerts, dismissedAtByKey, currentUserId, eligibleAddresseeIds],
   );
 }

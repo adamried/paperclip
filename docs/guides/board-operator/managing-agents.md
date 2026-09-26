@@ -22,7 +22,7 @@ Create agents from the Agents page. Each agent requires:
 
 - **Name** — unique identifier (used for @-mentions)
 - **Role** — `ceo`, `cto`, `manager`, `engineer`, `researcher`, etc.
-- **Reports to** — the agent's manager in the org tree
+- **Reports to** — the Board, a person on the Board, or another agent (see [Org Structure](./org-structure.md))
 - **Adapter type** — how the agent runs
 - **Adapter config** — runtime-specific settings (working directory, model, prompt, etc.)
 - **Capabilities** — short description of what this agent does
@@ -73,6 +73,20 @@ Edit an agent's configuration from the agent detail page:
 - **Budget** — monthly spend limit
 
 Use the "Test Environment" button to validate that the agent's adapter config is correct before running.
+
+## Agent permissions
+
+The **Permissions** tab on the agent detail page holds four Board-managed controls:
+
+- **Can create new agents** — lets the agent hire or create agents. This also grants task assignment.
+- **Can create/import skills** — lets the agent install, import, create, and scan organization skills.
+- **Can assign tasks** — task assignment authority. Locked on for CEOs and agent creators.
+- **Can change other agents' configuration** — whether the agent may reconfigure its peers:
+  - **No** (default): the agent recommends changes to the Board instead.
+  - **Suggest changes (Board approves)**: the agent proposes a change and it applies only after you accept the change request.
+  - **Apply directly**: the agent's changes to other agents apply immediately.
+
+The root CEO agent receives **Apply directly** automatically and the control shows as locked; bundled built-in agents that ship with a default level are locked at that level too. Low-trust review agents cannot reconfigure other agents regardless of this setting. Only Board users can change this control; agents cannot grant it to each other.
 
 ## Pausing and Resuming
 

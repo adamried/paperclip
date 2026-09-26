@@ -5,7 +5,7 @@ import type { ServerAdapterModule } from "../adapters/index.js";
 
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
-  getChainOfCommand: vi.fn(async () => []),
+  getChainOfCommandWithRoot: vi.fn(async () => ({ chainOfCommand: [], chainOfCommandRoot: { kind: "board" } })),
 }));
 
 const mockAccessService = vi.hoisted(() => ({

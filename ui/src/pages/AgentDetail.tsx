@@ -51,6 +51,7 @@ import { InlineBanner } from "../components/InlineBanner";
 import { BuiltInBundlePanel } from "../components/BuiltInBundlePanel";
 import { ConfigureBuiltInAgentModal } from "../components/ConfigureBuiltInAgentModal";
 import { TrustPresetSection } from "../components/TrustPresetSection";
+import { AgentChangeAuthorityField } from "../components/AgentChangeAuthorityField";
 import { FileTree, buildFileTree } from "../components/FileTree";
 import { ScrollToBottom } from "../components/ScrollToBottom";
 import { SourceResolvedFoldCallout } from "../components/SourceResolvedFoldCallout";
@@ -1730,6 +1731,17 @@ export function AgentOverview({
     ?? asNonEmptyString(agent.runtimeConfig?.model)
     ?? "Adapter default";
   const lastRun = runs[0] ?? null;
+  // An agent with a human manager has no agent manager, so the chain root is
+  // that person; no extra directory lookup is needed.
+  const reportsToPerson = agent.reportsToUserId && agent.chainOfCommandRoot?.kind === "user"
+    ? {
+        label: agent.chainOfCommandRoot.name?.trim()
+          || agent.chainOfCommandRoot.email?.trim()
+          || (agent.chainOfCommandRoot.id === "local-board" ? "Board" : agent.chainOfCommandRoot.id.slice(0, 8)),
+        image: agent.chainOfCommandRoot.image,
+        active: agent.chainOfCommandRoot.active,
+      }
+    : null;
 
   return (
     <div className="space-y-6">
@@ -1749,7 +1761,15 @@ export function AgentOverview({
                 <Link className="text-sm hover:underline" to={agentDetailHref(agentRouteRef(reportsToAgent))}>
                   {reportsToAgent.name}
                 </Link>
-              ) : <span className="text-sm">Board</span>}
+              ) : reportsToPerson ? (
+                <span className="inline-flex min-w-0 items-center gap-1.5 text-sm">
+                  <Identity name={reportsToPerson.label} avatarUrl={reportsToPerson.image} size="xs" />
+                  <span className="truncate">{reportsToPerson.label}</span>
+                  {!reportsToPerson.active && (
+                    <span className="text-xs text-muted-foreground">(inactive member)</span>
+                  )}
+                </span>
+              ) : <span className="text-sm">The Board</span>}
             </SummaryRow>
             <SummaryRow label="Direct reports"><span className="text-sm tabular-nums">{directReportCount}</span></SummaryRow>
           </div>
@@ -2046,6 +2066,8 @@ export function ConfigurationTab({
   const canAssignTasks = Boolean(agent.access?.canAssignTasks);
   const taskAssignSource = agent.access?.taskAssignSource ?? "none";
   const taskAssignLocked = agent.role === "ceo" || canCreateAgents;
+  const agentChangeAuthority = agent.access?.agentChangeAuthority ?? "none";
+  const agentChangeAuthoritySource = agent.access?.agentChangeAuthoritySource ?? "none";
   const taskAssignHint =
     taskAssignSource === "ceo_role"
       ? "Enabled automatically for CEO agents."
@@ -2164,6 +2186,20 @@ export function ConfigurationTab({
               disabled={updatePermissions.isPending || taskAssignLocked}
             />
           </div>
+          <AgentChangeAuthorityField
+            value={agentChangeAuthority}
+            source={agentChangeAuthoritySource}
+            lowTrust={lowTrustSelected}
+            disabled={updatePermissions.isPending}
+            onChange={(next) =>
+              updatePermissions.mutate({
+                canCreateAgents,
+                canCreateSkills,
+                canAssignTasks,
+                agentChangeAuthority: next,
+              })
+            }
+          />
         </div>
       </div> : null}
     </div>

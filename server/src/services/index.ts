@@ -129,6 +129,7 @@ export {
 } from "./principal-access-compatibility.js";
 export { authorizationService } from "./authorization.js";
 export { inboxAgentPolicyService } from "./inbox-agent-policy.js";
+export { approvalDecisionPolicyService } from "./approval-decision-policy.js";
 export type {
   AuthorizationAction,
   AuthorizationActor,

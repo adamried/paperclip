@@ -26,6 +26,7 @@ function statusIcon(status: string) {
 export function ApprovalCard({
   approval,
   requesterAgent,
+  addressee = null,
   onApprove,
   onReject,
   onOpen,
@@ -35,6 +36,8 @@ export function ApprovalCard({
 }: {
   approval: Approval;
   requesterAgent: Agent | null;
+  /** The person this approval is addressed to, when it is addressed to one. */
+  addressee?: { name: string; image: string | null } | null;
   onApprove?: () => void;
   onReject?: () => void;
   onOpen?: () => void;
@@ -72,6 +75,15 @@ export function ApprovalCard({
                   <div className="inline-flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                     <span>Requested by</span>
                     <Identity name={requesterAgent.name} size="sm" className="inline-flex" />
+                  </div>
+                )}
+                {addressee && (
+                  <div
+                    className="inline-flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"
+                    data-testid="approval-addressee"
+                  >
+                    <span>Addressed to</span>
+                    <Identity name={addressee.name} avatarUrl={addressee.image} size="sm" className="inline-flex" />
                   </div>
                 )}
               </div>

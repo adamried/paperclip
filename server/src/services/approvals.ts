@@ -46,6 +46,7 @@ export function approvalService(db: Db) {
     targetStatus: "approved" | "rejected",
     decidedByUserId: string,
     decisionNote: string | null | undefined,
+    beforeResolve?: (existing: Awaited<ReturnType<typeof getExistingApproval>>) => Promise<void>,
   ): Promise<ResolutionResult> {
     const existing = await getExistingApproval(id);
     if (!canResolveStatuses.has(existing.status)) {
@@ -56,6 +57,9 @@ export function approvalService(db: Db) {
         `Only pending or revision requested approvals can be ${targetStatus === "approved" ? "approved" : "rejected"}`,
       );
     }
+    // Runs before the status flips, so a validation failure leaves the
+    // approval decidable instead of approved-but-unapplied.
+    if (beforeResolve) await beforeResolve(existing);
 
     const now = new Date();
     const updated = await db
@@ -146,6 +150,36 @@ export function approvalService(db: Db) {
         "approved",
         decidedByUserId,
         decisionNote,
+        async (existing) => {
+          // A hire payload can be resubmitted with bad manager fields; validate
+          // them before the approval is marked approved.
+          if (existing.type !== "hire_agent") return;
+          const payload = existing.payload as Record<string, unknown>;
+          const payloadAgentId = typeof payload.agentId === "string" ? payload.agentId : null;
+          const managerPatch: { reportsTo?: string | null; reportsToUserId?: string | null } = {};
+          if (Object.prototype.hasOwnProperty.call(payload, "reportsTo")) {
+            managerPatch.reportsTo = typeof payload.reportsTo === "string" ? payload.reportsTo : null;
+          }
+          if (Object.prototype.hasOwnProperty.call(payload, "reportsToUserId")) {
+            managerPatch.reportsToUserId = typeof payload.reportsToUserId === "string" ? payload.reportsToUserId : null;
+          }
+          if (!payloadAgentId) {
+            // The agent is created from the payload after the status flips,
+            // so its manager fields are checked here or an approval could end
+            // up approved with no agent behind it.
+            await agentsSvc.validateManagerPatch(existing.companyId, null, managerPatch);
+            return;
+          }
+          const pendingAgent = await agentsSvc.getById(payloadAgentId);
+          // Only a still-pending agent in this approval's company is activated
+          // from the payload; anything else is not this approval's to validate.
+          if (
+            !pendingAgent ||
+            pendingAgent.status !== "pending_approval" ||
+            pendingAgent.companyId !== existing.companyId
+          ) return;
+          await agentsSvc.validateManagerPatch(pendingAgent.companyId, pendingAgent.id, managerPatch, pendingAgent);
+        },
       );
 
       let hireApprovedAgentId: string | null = null;
@@ -163,6 +197,7 @@ export function approvalService(db: Db) {
             role: String(payload.role ?? "general"),
             title: typeof payload.title === "string" ? payload.title : null,
             reportsTo: typeof payload.reportsTo === "string" ? payload.reportsTo : null,
+            reportsToUserId: typeof payload.reportsToUserId === "string" ? payload.reportsToUserId : null,
             capabilities: typeof payload.capabilities === "string" ? payload.capabilities : null,
             adapterType: String(payload.adapterType ?? "process"),
             adapterConfig:

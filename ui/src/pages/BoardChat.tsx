@@ -14,6 +14,8 @@ import { agentsApi } from "../api/agents";
 import { issuesApi } from "../api/issues";
 import { goalsApi } from "../api/goals";
 import { queryKeys } from "../lib/queryKeys";
+import { authApi } from "../api/auth";
+import { boardContactAgent } from "../lib/board-contact-agent";
 import { MarkdownBody } from "../components/MarkdownBody";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -279,9 +281,16 @@ export function BoardChat() {
     enabled: !!selectedCompanyId,
   });
 
+  // The agent that fronts the room: the CEO, or the root agent when the
+  // company runs without one (root agents managed by people).
+  const { data: session } = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+  });
+  const currentUserId = session?.user.id ?? session?.session.userId ?? null;
   const ceoAgent = useMemo(
-    () => agents?.find((a) => a.role === "ceo" && a.status !== "terminated"),
-    [agents],
+    () => boardContactAgent(agents, currentUserId) ?? undefined,
+    [agents, currentUserId],
   );
 
   // Pull the company's top-level goal so the CEO's welcome can reference

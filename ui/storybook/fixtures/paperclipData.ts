@@ -1089,6 +1089,7 @@ export const storybookApprovals: Approval[] = [
     type: "hire_agent",
     requestedByAgentId: "agent-cto",
     requestedByUserId: null,
+    addresseeUserId: null,
     status: "pending",
     payload: {
       name: "DesignSystemCoder",
@@ -1111,6 +1112,7 @@ export const storybookApprovals: Approval[] = [
     type: "budget_override_required",
     requestedByAgentId: "agent-codex",
     requestedByUserId: null,
+    addresseeUserId: null,
     status: "revision_requested",
     payload: {
       scopeName: "Paperclip App",
@@ -1133,6 +1135,7 @@ export const storybookApprovals: Approval[] = [
     type: "request_board_approval",
     requestedByAgentId: "agent-cto",
     requestedByUserId: null,
+    addresseeUserId: null,
     status: "approved",
     payload: {
       title: "Publish the Storybook preview for design review",

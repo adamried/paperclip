@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lte, ne, not, or, sql } from "drizzle-orm";
+import { reconcileStoredResponsibleUserId, resolveActiveAgentManagerUserId } from "./agent-manager.js";
 import type { Db } from "@paperclipai/db";
 import {
   agents,
@@ -165,7 +166,13 @@ async function resolveCompanyDefaultResponsibleUserId(db: Db, companyId: string)
   return owner?.userId ?? null;
 }
 
-async function resolveRoutineResponsibleUserId(db: Db, companyId: string, actorUserId: string | null | undefined, parentIssueId?: string | null) {
+async function resolveRoutineResponsibleUserId(
+  db: Db,
+  companyId: string,
+  actorUserId: string | null | undefined,
+  parentIssueId?: string | null,
+  assigneeAgentId?: string | null,
+) {
   if (actorUserId) return actorUserId;
   if (parentIssueId) {
     const parent = await db
@@ -175,6 +182,12 @@ async function resolveRoutineResponsibleUserId(db: Db, companyId: string, actorU
       .then((rows) => rows[0] ?? null);
     if (parent?.responsibleUserId) return parent.responsibleUserId;
     if (parent?.createdByUserId) return parent.createdByUserId;
+  }
+  // A routine owned by an agent that reports to a person runs on that
+  // person's behalf before falling back to the company default.
+  if (assigneeAgentId) {
+    const managerUserId = await resolveActiveAgentManagerUserId(db, companyId, assigneeAgentId);
+    if (managerUserId) return managerUserId;
   }
   return resolveCompanyDefaultResponsibleUserId(db, companyId);
 }
@@ -1823,8 +1836,17 @@ export function routineService(
               return row?.responsibleUserId ?? snapshot?.routine.responsibleUserId ?? null;
             })
         : null;
+      // The stored responsible user is routine configuration, but a person
+      // who has since left or become a viewer is dropped here so the
+      // heartbeat resolves the run's identity (with its cause) at seed time,
+      // like a routine that never stored one.
       const responsibleUserId =
-        manualRunnerUserId ?? latestRevisionResponsibleUserId ?? input.routine.responsibleUserId ?? null;
+        manualRunnerUserId
+        ?? (await reconcileStoredResponsibleUserId(
+          txDb,
+          input.routine.companyId,
+          latestRevisionResponsibleUserId ?? input.routine.responsibleUserId ?? null,
+        ));
       const [createdRun] = await txDb
         .insert(routineRuns)
         .values({
@@ -2189,7 +2211,13 @@ export function routineService(
       );
       assertRoutineVariableDefinitions(variables);
       const status = normalizeDraftRoutineStatus(input.status, input.assigneeAgentId);
-      const responsibleUserId = await resolveRoutineResponsibleUserId(db, companyId, actor.userId, input.parentIssueId ?? null);
+      const responsibleUserId = await resolveRoutineResponsibleUserId(
+        db,
+        companyId,
+        actor.userId,
+        input.parentIssueId ?? null,
+        input.assigneeAgentId ?? null,
+      );
       if (!responsibleUserId) {
         throw unprocessable("Routine requires a responsible user");
       }
@@ -2292,6 +2320,7 @@ export function routineService(
         existing.companyId,
         actor.userId,
         patch.parentIssueId === undefined ? existing.parentIssueId : patch.parentIssueId,
+        patch.assigneeAgentId === undefined ? existing.assigneeAgentId : patch.assigneeAgentId,
       );
       if (!responsibleUserId) {
         throw unprocessable("Routine requires a responsible user");

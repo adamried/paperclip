@@ -172,7 +172,9 @@ describe("issueThreadInteractionService", () => {
     const db: any = {
       select: vi.fn(() => {
         selectCallCount += 1;
-        return createSelectChain(selectCallCount <= 2 ? [existingRow] : []);
+        // 1: company governance, 2: the acting agent's manager lookup
+        // (no manager on this row), 3: the idempotency lookup.
+        return createSelectChain(selectCallCount <= 3 ? [existingRow] : []);
       }),
       insert: vi.fn(),
       update: vi.fn(),

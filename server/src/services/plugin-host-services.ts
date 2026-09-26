@@ -41,6 +41,7 @@ import { heartbeatService } from "./heartbeat.js";
 import { budgetService } from "./budgets.js";
 import { issueApprovalService } from "./issue-approvals.js";
 import { approvalService } from "./approvals.js";
+import { assertApprovalDecisionAllowed } from "./approval-decision-policy.js";
 import { getStorageService } from "../storage/index.js";
 import { subscribeCompanyLiveEvents } from "./live-events.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -2668,6 +2669,8 @@ export function buildHostServices(
           throw new Error("actorUserId is required to decide an approval on behalf of a board user");
         }
         await requireActiveHumanMember(companyId, params.actorUserId);
+        // Same addressee gate as the web decision routes.
+        await assertApprovalDecisionAllowed(db, existing, params.actorUserId);
 
         const { approval, applied } = params.action === "approve"
           ? await approvalSvc.approve(params.approvalId, params.actorUserId, params.decisionNote ?? null)

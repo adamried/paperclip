@@ -3,8 +3,11 @@
  * Supports 5 visual styles: monochrome, nebula, circuit, warmth, schematic.
  * Pure SVG output — no browser/Playwright needed. PNG via sharp.
  */
+import type { OrgTreeNodeKind } from "@paperclipai/shared";
 
 export interface OrgNode {
+  /** "board" and "user" are container nodes from the org chart tree; absent means agent. */
+  kind?: OrgTreeNodeKind;
   id: string;
   name: string;
   role: string;
@@ -127,6 +130,18 @@ const ROLE_ICONS: Record<string, {
     // ⚙️ Gear (same as COO)
     emojiSvg: `<path fill="#66757F" d="M34 15h-3.362c-.324-1.369-.864-2.651-1.582-3.814l2.379-2.379c.781-.781.781-2.048 0-2.829l-1.414-1.414c-.781-.781-2.047-.781-2.828 0l-2.379 2.379C23.65 6.225 22.369 5.686 21 5.362V2c0-1.104-.896-2-2-2h-2c-1.104 0-2 .896-2 2v3.362c-1.369.324-2.651.864-3.814 1.582L8.808 4.565c-.781-.781-2.048-.781-2.828 0L4.565 5.979c-.781.781-.781 2.048-.001 2.829l2.379 2.379C6.225 12.35 5.686 13.632 5.362 15H2c-1.104 0-2 .896-2 2v2c0 1.104.896 2 2 2h3.362c.324 1.368.864 2.65 1.582 3.813l-2.379 2.379c-.78.78-.78 2.048.001 2.829l1.414 1.414c.78.78 2.047.78 2.828 0l2.379-2.379c1.163.719 2.445 1.258 3.814 1.582V34c0 1.104.896 2 2 2h2c1.104 0 2-.896 2-2v-3.362c1.368-.324 2.65-.864 3.813-1.582l2.379 2.379c.781.781 2.047.781 2.828 0l1.414-1.414c.781-.781.781-2.048 0-2.829l-2.379-2.379c.719-1.163 1.258-2.445 1.582-3.814H34c1.104 0 2-.896 2-2v-2C36 15.896 35.104 15 34 15zM18 26c-4.418 0-8-3.582-8-8s3.582-8 8-8 8 3.582 8 8-3.582 8-8 8z"/>`,
   },
+  board: {
+    bg: "#fef3c7", roleLabel: "The Board", accentColor: "#d29922", iconColor: "#92400e",
+    iconPath: "M8 2 2 5v1h12V5L8 2zm-5 5v5h2V7H3zm4 0v5h2V7H7zm4 0v5h2V7h-2zM2 13v1h12v-1H2z",
+    // 🏛️ Classical building
+    emojiSvg: `<path fill="#CCD6DD" d="M35 34.5c0 .829-.671 1.5-1.5 1.5h-31C1.671 36 1 35.329 1 34.5v-3c0-.829.671-1.5 1.5-1.5h31c.829 0 1.5.671 1.5 1.5v3z"/><path fill="#E1E8ED" d="M33 30H3c-.552 0-1 .448-1 1v2h32v-2c0-.552-.448-1-1-1z"/><path fill="#CCD6DD" d="M4 13h4v17H4zm8 0h4v17h-4zm8 0h4v17h-4zm8 0h4v17h-4z"/><path fill="#E1E8ED" d="M34 12H2c-.552 0-1-.448-1-1s.448-1 1-1h32c.552 0 1 .448 1 1s-.448 1-1 1z"/><path fill="#CCD6DD" d="M18 1 1 9v1h34V9L18 1z"/>`,
+  },
+  user: {
+    bg: "#dcfce7", roleLabel: "Manager", accentColor: "#3fb950", iconColor: "#166534",
+    iconPath: "M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM2 14c0-3.3 2.7-4 6-4s6 .7 6 4",
+    // 🧑 Person
+    emojiSvg: `<path fill="#3fb950" d="M24 26.799v-2.566c2-1.348 4.08-3.779 4.703-6.896.186.103.206.17.413.17.991 0 1.709-1.287 1.709-2.873 0-1.562-.823-2.827-1.794-2.865.187-.674.293-1.577.293-2.735C29.324 5.168 26 .527 18.541.527c-6.629 0-10.777 4.641-10.777 8.507 0 1.123.069 2.043.188 2.755-.911.137-1.629 1.352-1.629 2.845 0 1.587.804 2.873 1.796 2.873.206 0 .025-.067.209-.17C8.952 20.453 11 22.885 13 24.232v2.414c-5 .645-12 3.437-12 6.23v1.061C1 35 2.076 35 3.137 35h29.725C33.924 35 35 35 35 33.938v-1.061c0-2.615-6-5.225-11-6.078z"/>`,
+  },
   default: {
     bg: "#f3e8ff", roleLabel: "Agent", accentColor: "#bc8cff", iconColor: "#6b21a8",
     iconPath: "M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM2 14c0-3.3 2.7-4 6-4s6 .7 6 4",
@@ -153,6 +168,8 @@ function guessRoleTag(node: OrgNode): string {
 }
 
 function getRoleInfo(node: OrgNode) {
+  if (node.kind === "board") return { tag: "board", ...ROLE_ICONS.board };
+  if (node.kind === "user") return { tag: "user", ...ROLE_ICONS.user };
   const tag = guessRoleTag(node);
   return { tag, ...(ROLE_ICONS[tag] || ROLE_ICONS.default) };
 }

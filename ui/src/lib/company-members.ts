@@ -56,6 +56,39 @@ export function buildCompanyUserProfileMap(
   return profiles;
 }
 
+/**
+ * Ids of the people an approval can currently be addressed to: active
+ * members who are not viewers. Older servers omit `membershipRole`; those
+ * entries count as eligible. Returns null until the directory has loaded so
+ * callers can tell "unknown" from "nobody".
+ */
+export function eligibleApprovalAddresseeIds(
+  members: CompanyUserRecord[] | null | undefined,
+): Set<string> | null {
+  if (!members) return null;
+  const ids = new Set<string>();
+  for (const member of members) {
+    if (member.status !== "active") continue;
+    const role = "membershipRole" in member ? member.membershipRole : undefined;
+    if (role === "viewer") continue;
+    ids.add(member.principalId);
+  }
+  return ids;
+}
+
+/** The person an approval is addressed to, for display, or null when open to the Board. */
+export function approvalAddressee(
+  addresseeUserId: string | null | undefined,
+  profiles: ReadonlyMap<string, CompanyUserProfile>,
+): { name: string; image: string | null } | null {
+  if (!addresseeUserId) return null;
+  const profile = profiles.get(addresseeUserId);
+  return {
+    name: profile?.label ?? fallbackUserLabel(addresseeUserId),
+    image: profile?.image ?? null,
+  };
+}
+
 export function buildCompanyUserInlineOptions(
   members: CompanyUserRecord[] | null | undefined,
   options?: { excludeUserIds?: Iterable<string | null | undefined> },

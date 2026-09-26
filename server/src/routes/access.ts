@@ -1379,6 +1379,7 @@ async function loadCompanyUserDirectory(db: Db, companyId: string) {
     .select({
       principalId: companyMemberships.principalId,
       status: companyMemberships.status,
+      membershipRole: companyMemberships.membershipRole,
     })
     .from(companyMemberships)
     .where(
@@ -1396,6 +1397,8 @@ async function loadCompanyUserDirectory(db: Db, companyId: string) {
   return members.map((member) => ({
     principalId: member.principalId,
     status: "active" as const,
+    // Lets pickers hide viewers (read-only members cannot manage agents).
+    membershipRole: normalizeHumanRole(member.membershipRole, "viewer"),
     user: userMap.get(member.principalId) ?? null,
   }));
 }
@@ -4249,12 +4252,9 @@ export function accessRoutes(
       } else {
         assertLegacyAgentInviteAdapterType(existing.adapterType);
         const existingAgents = await agents.list(companyId);
+        // No CEO means the joined agent reports to the Board; a company can run
+        // with root agents managed by people instead of an AI CEO.
         const managerId = resolveJoinRequestAgentManagerId(existingAgents);
-        if (!managerId) {
-          throw conflict(
-            "Join request cannot be approved because this company has no active CEO"
-          );
-        }
 
         const agentName = deduplicateAgentName(
           existing.agentName ?? "New Agent",

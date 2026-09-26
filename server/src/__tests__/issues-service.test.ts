@@ -26,6 +26,7 @@ import {
   issues,
   projectWorkspaces,
   projects,
+  runIdentityContexts,
   workspaceOperations,
   toolApplications,
   toolConnections,
@@ -3127,6 +3128,73 @@ describeEmbeddedPostgres("issueService.create workspace inheritance", () => {
 
     expect(parent.responsibleUserId).toBe(responsibleUserId);
     expect(child.responsibleUserId).toBe(responsibleUserId);
+  });
+
+  it("does not stamp a run's manager-fallback identity onto agent-created child issues", async () => {
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const managerUserId = randomUUID();
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "Helper",
+      role: "chief_of_staff",
+      status: "active",
+      reportsToUserId: managerUserId,
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+
+    // The parent was created by the agent itself, so it carries no owner the
+    // child could inherit.
+    const parent = await svc.create(companyId, {
+      title: "Parent issue",
+      status: "in_progress",
+      priority: "medium",
+      assigneeAgentId: agentId,
+      createdByAgentId: agentId,
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      companyId,
+      agentId,
+      invocationSource: "assignment",
+      status: "running",
+      responsibleUserId: managerUserId,
+      contextSnapshot: { issueId: parent.id },
+    });
+    const [identity] = await db.insert(runIdentityContexts).values({
+      companyId,
+      runId,
+      revision: 1,
+      cause: "agent_manager",
+      correlationId: "dispatch",
+      status: "accepted",
+      responsibleUserId: managerUserId,
+      acceptedAt: new Date("2026-08-22T15:00:00.000Z"),
+    }).returning();
+    await db.update(heartbeatRuns)
+      .set({ activeIdentityContextId: identity!.id })
+      .where(eq(heartbeatRuns.id, runId));
+
+    const child = await svc.create(companyId, {
+      parentId: parent.id,
+      title: "Agent-created child",
+      createdByAgentId: agentId,
+      actorRunId: runId,
+      actorResponsibleUserId: managerUserId,
+    });
+
+    expect(child.responsibleUserId).not.toBe(managerUserId);
   });
 
   it("only honors explicit responsibleUserId for trusted issue create callers", async () => {

@@ -620,7 +620,7 @@ describe("OnboardingWizard — which step it lands on", () => {
       // every one of them is inert — asserted over the whole set rather than
       // one segment, since a single enabled one is the whole defect.
       const segments = [...document.body.querySelectorAll("button")].filter((b) =>
-        ["Hire your CEO", "Connect a model", "Review"].includes(
+        ["Hire your first agent", "Connect a model", "Review"].includes(
           b.getAttribute("aria-label") ?? "",
         ),
       ) as HTMLButtonElement[];

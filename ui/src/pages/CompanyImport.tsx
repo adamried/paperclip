@@ -13,6 +13,7 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToastActions } from "../context/ToastContext";
 import { authApi } from "../api/auth";
 import { ApiError } from "../api/client";
+import { boardContactAgent } from "../lib/board-contact-agent";
 import { companiesApi, type CompanyImportJobAccepted } from "../api/companies";
 import { adaptersApi } from "../api/adapters";
 import { agentsApi } from "../api/agents";
@@ -1009,8 +1010,10 @@ export function CompanyImport() {
   });
   const ceoAdapterType = useMemo(() => {
     if (!companyAgents) return "claude_local";
-    const ceo = companyAgents.find((a) => a.role === "ceo");
-    return ceo?.adapterType ?? "claude_local";
+    // A company may run without a CEO agent (root agents managed by people);
+    // fall back to whichever agent fronts the Board, then to any agent.
+    const contact = boardContactAgent(companyAgents, null);
+    return contact?.adapterType ?? companyAgents[0]?.adapterType ?? "claude_local";
   }, [companyAgents]);
 
   // Fetch the destination's installed adapters so imported agents keep their

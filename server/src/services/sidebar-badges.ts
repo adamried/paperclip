@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, not } from "drizzle-orm";
+import { filterApprovalsVisibleTo } from "./approval-decision-policy.js";
 import type { Db } from "@paperclipai/db";
 import { agents, approvals, heartbeatRuns } from "@paperclipai/db";
 import type { SidebarBadges } from "@paperclipai/shared";
@@ -30,10 +31,12 @@ export function sidebarBadgeService(db: Db) {
         dismissals?: ReadonlyMap<string, number>;
         joinRequests?: Array<{ id: string; updatedAt: Date | string | null; createdAt: Date | string }>;
         unreadTouchedIssues?: number;
+        /** The person viewing; approvals addressed to someone else are not theirs to count. */
+        userId?: string | null;
       },
     ): Promise<SidebarBadges> => {
       const actionableApprovals = await db
-        .select({ id: approvals.id, updatedAt: approvals.updatedAt })
+        .select({ id: approvals.id, updatedAt: approvals.updatedAt, addresseeUserId: approvals.addresseeUserId })
         .from(approvals)
         .where(
           and(
@@ -41,9 +44,12 @@ export function sidebarBadgeService(db: Db) {
             inArray(approvals.status, ACTIONABLE_APPROVAL_STATUSES),
           ),
         )
-        .then((rows) =>
-          rows.filter((row) => !isDismissed(extra?.dismissals ?? new Map(), `approval:${row.id}`, row.updatedAt)).length
-        );
+        .then(async (rows) => {
+          // Addressed approvals count for their addressee only (same rule as the inbox feed).
+          const visible = await filterApprovalsVisibleTo(db, companyId, rows, extra?.userId);
+          return visible.filter((row) =>
+            !isDismissed(extra?.dismissals ?? new Map(), `approval:${row.id}`, row.updatedAt)).length;
+        });
 
       const latestRunByAgent = await db
         .selectDistinctOn([heartbeatRuns.agentId], {

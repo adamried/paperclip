@@ -21,6 +21,8 @@ import type {
 import { AGENT_DEFAULT_MAX_CONCURRENT_RUNS, AGENT_ROLES, AGENT_ROLE_LABELS, AGENT_ROLE_INSTRUCTION_FILES, agentRoleInstructionBundle, supportedEnvironmentDriversForAdapter, isValidBrowserCode, ADAPTER_AUTH_MISSING_CHECK_CODE, type AgentRole } from "@paperclipai/shared";
 import type { AdapterModel } from "../api/agents";
 import { agentsApi } from "../api/agents";
+import { accessApi } from "../api/access";
+import { selectionFromPatch, selectionToPatch } from "../lib/reports-to-selection";
 import { ApiError } from "../api/client";
 import { environmentsApi } from "../api/environments";
 import { instanceSettingsApi } from "../api/instanceSettings";
@@ -953,6 +955,12 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     queryFn: () => agentsApi.list(selectedCompanyId!),
     enabled: Boolean(!isCreate && selectedCompanyId),
   });
+  // People on the Board are manager candidates alongside agents.
+  const { data: companyUserDirectory } = useQuery({
+    queryKey: selectedCompanyId ? queryKeys.access.companyUserDirectory(selectedCompanyId) : ["access", "none", "user-directory"],
+    queryFn: () => accessApi.listUserDirectory(selectedCompanyId!),
+    enabled: Boolean(!isCreate && selectedCompanyId),
+  });
 
   /** Props passed to adapter-specific config field components */
   const adapterFieldProps = {
@@ -1538,8 +1546,16 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
             <Field label="Reports to" hint={help.reportsTo}>
               <ReportsToPicker
                 agents={companyAgents}
-                value={eff("identity", "reportsTo", props.agent.reportsTo ?? null)}
-                onChange={(id) => mark("identity", "reportsTo", id)}
+                users={companyUserDirectory?.users ?? []}
+                value={selectionFromPatch({
+                  reportsTo: eff("identity", "reportsTo", props.agent.reportsTo ?? null),
+                  reportsToUserId: eff("identity", "reportsToUserId", props.agent.reportsToUserId ?? null),
+                })}
+                onChange={(selection) => {
+                  const next = selectionToPatch(selection);
+                  mark("identity", "reportsTo", next.reportsTo);
+                  mark("identity", "reportsToUserId", next.reportsToUserId);
+                }}
                 excludeAgentIds={[props.agent.id]}
                 chooseLabel="Choose manager…"
               />

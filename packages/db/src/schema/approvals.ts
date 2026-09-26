@@ -10,6 +10,10 @@ export const approvals = pgTable(
     type: text("type").notNull(),
     requestedByAgentId: uuid("requested_by_agent_id").references(() => agents.id),
     requestedByUserId: text("requested_by_user_id"),
+    // The person this approval is addressed to: by default the requesting
+    // agent's human manager. Null means "the Board at large". Bare text like
+    // the other user id columns on this table.
+    addresseeUserId: text("addressee_user_id"),
     status: text("status").notNull().default("pending"),
     payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
     decisionNote: text("decision_note"),
@@ -23,6 +27,11 @@ export const approvals = pgTable(
       table.companyId,
       table.status,
       table.type,
+    ),
+    companyAddresseeStatusIdx: index("approvals_company_addressee_status_idx").on(
+      table.companyId,
+      table.addresseeUserId,
+      table.status,
     ),
   }),
 );

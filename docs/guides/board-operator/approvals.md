@@ -33,6 +33,15 @@ pending -> approved
    - **Reject** — the action is denied
    - **Request revision** — ask the agent to modify and resubmit
 
+## Who an Approval Is Addressed To
+
+When an agent that reports to a person requests approval, the request is addressed to that person. It lands in their inbox first, and the Approvals page shows an **Addressed to** chip. Requests from agents that report to the Board (or to another agent) are open to the whole Board as before.
+
+Each person chooses, per organization, who may decide approvals addressed to them. Open **Profile settings → Who may decide approvals addressed to me**:
+
+- **Anyone on the Board can decide** (default) — other Board members can approve or reject on your behalf. Use this for cover when you are out.
+- **Only I can decide** — other Board members see the approval but get a clear refusal naming you if they try to decide it. Instance admins are not exempt, and nobody else can change this setting for you. Flip it back when you want cover; the approval itself does not change. If you leave the organization or become a viewer, your addressed approvals open up to the Board so nothing is stranded. A plugin that decides approvals acts as the person it reports, so an installed plugin is trusted to name that person truthfully.
+
 ## Reviewing Approvals
 
 From the Approvals page, you can see all pending approvals. Each approval shows:

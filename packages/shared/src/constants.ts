@@ -1055,6 +1055,21 @@ export const PERMISSION_KEYS = [
 ] as const;
 export type PermissionKey = (typeof PERMISSION_KEYS)[number];
 
+/**
+ * Board-managed level of authority an agent holds over other agents'
+ * configuration. "suggest" maps to the consent-gated `agents:suggest-changes`
+ * grant; "direct" maps to the `agents:configure` grant.
+ */
+export const AGENT_CHANGE_AUTHORITY_LEVELS = ["none", "suggest", "direct"] as const;
+export type AgentChangeAuthority = (typeof AGENT_CHANGE_AUTHORITY_LEVELS)[number];
+export const AGENT_CHANGE_AUTHORITY_SOURCES = [
+  "root_ceo_default",
+  "built_in_default",
+  "explicit_grant",
+  "none",
+] as const;
+export type AgentChangeAuthoritySource = (typeof AGENT_CHANGE_AUTHORITY_SOURCES)[number];
+
 export const TOOL_APPLICATION_TYPES = ["mcp_http", "mcp_stdio", "paperclip_plugin", "a2a", "chat"] as const;
 export type ToolApplicationType = (typeof TOOL_APPLICATION_TYPES)[number];
 

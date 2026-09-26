@@ -38,9 +38,12 @@ const baseAgent: AgentDetail = {
   createdAt: new Date("2026-05-10T00:00:00.000Z"),
   updatedAt: new Date("2026-05-10T00:00:00.000Z"),
   chainOfCommand: [],
+  chainOfCommandRoot: { kind: "board" },
   access: {
     canAssignTasks: true,
     taskAssignSource: "explicit_grant",
+    agentChangeAuthority: "none",
+    agentChangeAuthoritySource: "none",
     membership: null,
     grants: [],
   },

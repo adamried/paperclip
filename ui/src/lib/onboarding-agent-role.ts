@@ -15,6 +15,19 @@ import { AGENT_ROLE_LABELS, type AgentRole } from "@paperclipai/shared";
  */
 export const DEFAULT_AGENT_ROLE = "ceo" as const;
 
+/**
+ * The role for the first hire when the customer runs the company themselves
+ * and wants a helper reporting to them rather than an AI CEO. The server gives
+ * a non-CEO first hire the chief-of-staff onboarding persona.
+ */
+export const BOARD_RUN_FIRST_AGENT_ROLE = "chief_of_staff" as const;
+
+export type FirstAgentMode = "ai_ceo" | "board_run";
+
+export function firstAgentRoleForMode(mode: FirstAgentMode): AgentRole {
+  return mode === "board_run" ? BOARD_RUN_FIRST_AGENT_ROLE : DEFAULT_AGENT_ROLE;
+}
+
 export const DEFAULT_AGENT_NAME = "Chief of staff";
 
 /**

@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, notInArray, sql } from "drizzle-orm";
+import { filterApprovalsVisibleTo } from "./approval-decision-policy.js";
 import type { Db } from "@paperclipai/db";
 import {
   agents,
@@ -1097,13 +1098,17 @@ export function attentionService(db: Db, serviceOptions: AttentionServiceOptions
           status: approvals.status,
           requestedByAgentId: approvals.requestedByAgentId,
           requestedByUserId: approvals.requestedByUserId,
+          addresseeUserId: approvals.addresseeUserId,
           payload: approvals.payload,
           createdAt: approvals.createdAt,
           updatedAt: approvals.updatedAt,
         })
         .from(approvals)
         .where(and(eq(approvals.companyId, companyId), eq(approvals.status, "pending")))
-        .orderBy(desc(approvals.updatedAt), desc(approvals.id));
+        .orderBy(desc(approvals.updatedAt), desc(approvals.id))
+        // An approval addressed to a person lands in that person's inbox only,
+        // the same rule as addressed interactions below.
+        .then((rows) => filterApprovalsVisibleTo(db, companyId, rows, options.userId));
 
       const pendingApprovalIds = pendingApprovals.map((approval) => approval.id);
       const approvalIssueRows = pendingApprovalIds.length > 0
@@ -1139,10 +1144,13 @@ export function attentionService(db: Db, serviceOptions: AttentionServiceOptions
               type: approval.type,
               requestedByAgentId: approval.requestedByAgentId,
               requestedByUserId: approval.requestedByUserId,
+              addresseeUserId: approval.addresseeUserId,
               issueId: approvalIssueMap.get(approval.id) ?? null,
             },
           },
-          whyNow: "Approval is pending a board decision.",
+          whyNow: approval.addresseeUserId
+            ? "Approval is addressed to you."
+            : "Approval is pending a board decision.",
           decisionVerbs: decisionVerbs(
             { id: "approve", label: "Approve", description: "Approve the request." },
             { id: "reject", label: "Reject", description: "Reject the request." },

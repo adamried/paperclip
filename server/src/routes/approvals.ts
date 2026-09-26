@@ -1,6 +1,9 @@
 import { Router, type Request } from "express";
 import { eq } from "drizzle-orm";
 import { heartbeatRuns, type Db } from "@paperclipai/db";
+import { assertAgentMayAssignManager, assertHumanManagerEligible, resolveActiveAgentManagerUserId } from "../services/agent-manager.js";
+import { assertApprovalDecisionAllowed } from "../services/approval-decision-policy.js";
+import { unprocessable } from "../errors.js";
 import {
   addApprovalCommentSchema,
   createApprovalSchema,
@@ -23,6 +26,12 @@ import { redactEventPayload } from "../redaction.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
 import { issueService } from "../services/issues.js";
 import { REVIEW_PATH_RECOVERY_INSTRUCTION } from "../services/recovery/review-path-recovery.js";
+
+function readPayloadReportsToUserId(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const value = (payload as Record<string, unknown>).reportsToUserId;
+  return typeof value === "string" && value.trim() ? value : null;
+}
 
 function redactApprovalPayload<T extends { payload: Record<string, unknown> }>(approval: T): T {
   return {
@@ -202,6 +211,35 @@ export function approvalRoutes(
     return false;
   }
 
+  /**
+   * Who an approval is addressed to. An agent's request always goes to the
+   * acting agent's own human manager (null when it has none): the agent can
+   * neither name someone else nor opt out with an explicit null, so it cannot
+   * route around that person. A Board actor may address any eligible member,
+   * or null for the Board at large.
+   */
+  async function resolveApprovalAddressee(
+    req: Request,
+    companyId: string,
+    requested: string | null | undefined,
+  ): Promise<string | null> {
+    if (req.actor.type === "agent") {
+      const manager = req.actor.agentId
+        ? await resolveActiveAgentManagerUserId(db, companyId, req.actor.agentId)
+        : null;
+      if (requested !== undefined && requested !== null && requested !== manager) {
+        throw unprocessable("Agents may only address approvals to their own manager", {
+          code: "approval_addressee_not_allowed",
+          addresseeUserId: requested,
+        });
+      }
+      return manager;
+    }
+    if (requested === undefined || requested === null) return null;
+    await assertHumanManagerEligible(db, companyId, requested);
+    return requested;
+  }
+
   router.get("/companies/:companyId/approvals", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
@@ -240,12 +278,23 @@ export function approvalRoutes(
         : approvalInput.payload;
 
     const actor = getActorInfo(req);
+    // An agent is always the requester of its own request; the body cannot
+    // name a peer (which would also change who the approval is addressed to).
+    const requestedByAgentId =
+      actor.actorType === "agent"
+        ? actor.actorId
+        : approvalInput.requestedByAgentId ?? null;
+    const addresseeUserId = await resolveApprovalAddressee(req, companyId, approvalInput.addresseeUserId);
+    // A hire payload filed by an agent obeys the same manager rule as a direct hire.
+    if (req.actor.type === "agent" && approvalInput.type === "hire_agent") {
+      await assertAgentMayAssignManager(db, companyId, req.actor.agentId ?? null, readPayloadReportsToUserId(normalizedPayload));
+    }
     const approval = await svc.create(companyId, {
       ...approvalInput,
       payload: normalizedPayload,
       requestedByUserId: actor.actorType === "user" ? actor.actorId : null,
-      requestedByAgentId:
-        approvalInput.requestedByAgentId ?? (actor.actorType === "agent" ? actor.actorId : null),
+      requestedByAgentId,
+      addresseeUserId,
       status: "pending",
       decisionNote: null,
       decidedByUserId: null,
@@ -268,7 +317,7 @@ export function approvalRoutes(
       action: "approval.created",
       entityType: "approval",
       entityId: approval.id,
-      details: { type: approval.type, issueIds: uniqueIssueIds },
+      details: { type: approval.type, issueIds: uniqueIssueIds, addresseeUserId },
     });
 
     res.status(201).json(redactApprovalPayload(approval));
@@ -286,10 +335,12 @@ export function approvalRoutes(
   router.post("/approvals/:id/approve", validate(resolveApprovalSchema), async (req, res) => {
     assertBoard(req);
     const id = req.params.id as string;
-    if (!(await requireApprovalAccess(req, id))) {
+    const existing = await requireApprovalAccess(req, id);
+    if (!existing) {
       res.status(404).json({ error: "Approval not found" });
       return;
     }
+    await assertApprovalDecisionAllowed(db, existing, req.actor.userId ?? null);
     const decidedByUserId = req.actor.userId ?? "board";
     const { approval, applied } = await svc.approve(id, decidedByUserId, req.body.decisionNote);
 
@@ -402,10 +453,12 @@ export function approvalRoutes(
   router.post("/approvals/:id/reject", validate(resolveApprovalSchema), async (req, res) => {
     assertBoard(req);
     const id = req.params.id as string;
-    if (!(await requireApprovalAccess(req, id))) {
+    const existing = await requireApprovalAccess(req, id);
+    if (!existing) {
       res.status(404).json({ error: "Approval not found" });
       return;
     }
+    await assertApprovalDecisionAllowed(db, existing, req.actor.userId ?? null);
     const decidedByUserId = req.actor.userId ?? "board";
     const { approval, applied } = await svc.reject(id, decidedByUserId, req.body.decisionNote);
 
@@ -440,10 +493,12 @@ export function approvalRoutes(
     async (req, res) => {
       assertBoard(req);
       const id = req.params.id as string;
-      if (!(await requireApprovalAccess(req, id))) {
+      const existing = await requireApprovalAccess(req, id);
+      if (!existing) {
         res.status(404).json({ error: "Approval not found" });
         return;
       }
+      await assertApprovalDecisionAllowed(db, existing, req.actor.userId ?? null);
       const decidedByUserId = req.actor.userId ?? "board";
       const approval = await svc.requestRevision(id, decidedByUserId, req.body.decisionNote);
 
@@ -481,6 +536,11 @@ export function approvalRoutes(
           )
         : req.body.payload
       : undefined;
+    // A resubmitted hire payload cannot smuggle in a manager the agent could
+    // not assign directly.
+    if (req.actor.type === "agent" && existing.type === "hire_agent" && normalizedPayload) {
+      await assertAgentMayAssignManager(db, existing.companyId, req.actor.agentId ?? null, readPayloadReportsToUserId(normalizedPayload));
+    }
     const approval = await svc.resubmit(id, normalizedPayload);
     const actor = getActorInfo(req);
     await logActivity(db, {

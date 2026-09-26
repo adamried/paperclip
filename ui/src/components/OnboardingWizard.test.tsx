@@ -445,7 +445,7 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
       await clickByText((t) => t.startsWith("Continue"));
 
       expect(mockCompaniesApi.create).toHaveBeenCalledWith({ name: "Initech" });
-      expect(document.body.textContent).toContain("Hire your CEO");
+      expect(document.body.textContent).toContain("Hire your first agent");
       expect(document.body.textContent).not.toContain("Define your mission");
       expect(document.body.textContent).not.toContain("Tell us about your team");
 
@@ -462,7 +462,7 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
       mockCompaniesApi.create.mockResolvedValue({ id: "company-new", issuePrefix: "INI" });
       const { root } = await openStepOne();
       await clickByText((t) => t.startsWith("Continue"));
-      expect(document.body.textContent).toContain("Hire your CEO");
+      expect(document.body.textContent).toContain("Hire your first agent");
 
       // Step 3 → 4 needs an agent name — the one field the step has now.
       const agentField = document.body.querySelector(
@@ -691,7 +691,7 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
       await flushReact();
 
       expect(mockCompaniesApi.create).toHaveBeenCalledTimes(1);
-      expect(document.body.textContent).toContain("Hire your CEO");
+      expect(document.body.textContent).toContain("Hire your first agent");
 
       await act(async () => root.unmount());
     });
@@ -726,7 +726,7 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
 
       await act(async () => resolveCreate({ id: "company-new", issuePrefix: "INI" }));
       await flushReact();
-      expect(document.body.textContent).toContain("Hire your CEO");
+      expect(document.body.textContent).toContain("Hire your first agent");
 
       await act(async () => root.unmount());
     });
@@ -737,7 +737,7 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
       mockCompaniesApi.create.mockResolvedValue({ id: "company-new", issuePrefix: "INI" });
       const { root } = await openStepOne();
       await clickByText((t) => t.startsWith("Continue"));
-      expect(document.body.textContent).toContain("Hire your CEO");
+      expect(document.body.textContent).toContain("Hire your first agent");
 
       await clickByText((t) => t.includes("Back"));
 
@@ -1345,7 +1345,7 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
     // The draft is restored once companies settle: step 3 (Create your first
     // agent) with the saved agent name in the input, not the defaults
     // (step 0, "Chief of staff").
-    expect(document.body.textContent).toContain("Hire your CEO");
+    expect(document.body.textContent).toContain("Hire your first agent");
     const nameInput = document.body.querySelector(
       "#onboarding-agent-name",
     ) as HTMLInputElement | null;
@@ -1355,7 +1355,7 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
     // labelled by destination: the wizard has its own numbering, and two
     // controls both announcing "Step 1" would mean different things.
     const currentStep = document.body.querySelector('[aria-current="step"]');
-    expect(currentStep?.getAttribute("aria-label")).toBe("Hire your CEO");
+    expect(currentStep?.getAttribute("aria-label")).toBe("Hire your first agent");
     expect(document.body.textContent).toContain("Step 1 of 3");
 
     await act(async () => {

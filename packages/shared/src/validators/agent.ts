@@ -1,6 +1,7 @@
 import { aiConnectionBindingSchema } from "../ai-connections.js";
 import { z } from "zod";
 import {
+  AGENT_CHANGE_AUTHORITY_LEVELS,
   AGENT_ICON_NAMES,
   AGENT_ROLES,
   AGENT_STATUSES,
@@ -81,6 +82,10 @@ export const createAgentSchema = z.object({
   title: z.string().optional().nullable(),
   icon: z.enum(AGENT_ICON_NAMES).optional().nullable(),
   reportsTo: z.string().guid().optional().nullable(),
+  // A human company member as manager. The server enforces that at most one of
+  // reportsTo / reportsToUserId is set and that the user is an active,
+  // non-viewer member of the company.
+  reportsToUserId: z.string().trim().min(1).optional().nullable(),
   capabilities: z.string().optional().nullable(),
   desiredSkills: z.array(agentDesiredSkillSelectionSchema).optional(),
   adapterType: agentAdapterTypeSchema,
@@ -283,6 +288,10 @@ export const updateAgentPermissionsSchema = z.object({
   canAssignTasks: z.boolean(),
   trustPreset: trustPresetSchema.optional(),
   authorizationPolicy: trustAuthorizationPolicySchema.optional(),
+  // Omitted means "leave the agents:configure / agents:suggest-changes grants
+  // as they are"; the route writes grant rows for it and never persists it in
+  // the permissions JSON.
+  agentChangeAuthority: z.enum(AGENT_CHANGE_AUTHORITY_LEVELS).optional(),
 });
 
 export type UpdateAgentPermissions = z.infer<typeof updateAgentPermissionsSchema>;

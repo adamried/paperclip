@@ -24,7 +24,15 @@ import { useResolvedAiConnection } from "@/components/ai-connections/useResolved
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useNavigate, useSearchParams } from "@/lib/router";
 import { agentsApi } from "@/api/agents";
+import { accessApi } from "@/api/access";
+import { authApi } from "@/api/auth";
 import { adaptersApi } from "@/api/adapters";
+import { ReportsToPicker } from "../ReportsToPicker";
+import {
+  BOARD_SELECTION,
+  selectionToPatch,
+  type ReportsToSelection,
+} from "@/lib/reports-to-selection";
 import { environmentsApi } from "@/api/environments";
 import { instanceSettingsApi } from "@/api/instanceSettings";
 import { secretsApi } from "@/api/secrets";
@@ -145,6 +153,8 @@ function Setup({
   const [environmentOverride, setEnvironmentOverride] = useState("");
   // Empty means automatic: the company's first agent becomes the CEO, later hires are general.
   const [role, setRole] = useState<AgentRole | "">("");
+  // null = automatic: the CEO when there is one, otherwise the Board.
+  const [reportsToChoice, setReportsToChoice] = useState<ReportsToSelection | null>(null);
   const [provider, setProvider] = useState("openrouter");
   const [apiKey, setApiKey] = useState("");
   const [providerBinding, setProviderBinding] = useState<EnvBinding | null>(
@@ -196,10 +206,27 @@ function Setup({
     queryKey: queryKeys.adapters.all,
     queryFn: adaptersApi.list,
   });
+  const userDirectory = useQuery({
+    queryKey: queryKeys.access.companyUserDirectory(companyId),
+    queryFn: () => accessApi.listUserDirectory(companyId),
+    enabled: Boolean(companyId),
+  });
+  const session = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+  });
+  const currentUserId = session.data?.user.id ?? session.data?.session.userId ?? null;
   const agents = useQuery({
     queryKey: queryKeys.agents.list(companyId),
     queryFn: () => agentsApi.list(companyId),
   });
+  // Default manager: the live CEO when there is one, otherwise the Board.
+  const effectiveReportsTo: ReportsToSelection = reportsToChoice ?? (() => {
+    const leader = (agents.data ?? []).find(
+      (agent) => agent.role === "ceo" && agent.status !== "terminated",
+    );
+    return leader ? { kind: "agent", id: leader.id } : BOARD_SELECTION;
+  })();
   const envs = useQuery({
     queryKey: queryKeys.environments.list(companyId),
     queryFn: () => environmentsApi.list(companyId),
@@ -507,13 +534,18 @@ function Setup({
           };
       }
       const existing = agents.data ?? [];
-      const leader = existing.find(
-        (agent) => agent.role === "ceo" && agent.status !== "terminated",
-      );
+      const manager = effectiveReportsTo;
+      // The first agent is the CEO unless it reports to a person, in which
+      // case it is a chief of staff; later hires default to General.
+      const automaticRole: AgentRole = existing.length
+        ? "general"
+        : manager.kind === "user"
+          ? "chief_of_staff"
+          : "ceo";
       const response = await agentsApi.hire(companyId, {
         name: name.trim(),
-        role: role || (existing.length ? "general" : "ceo"),
-        ...(leader ? { reportsTo: leader.id } : {}),
+        role: role || automaticRole,
+        ...selectionToPatch(manager),
         adapterType,
         adapterConfig: config,
         defaultEnvironmentId:
@@ -1118,7 +1150,11 @@ function Setup({
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="auto">
-                              Automatic: {(agents.data ?? []).length ? "General" : "Chief Executive (first agent)"}
+                              Automatic: {(agents.data ?? []).length
+                                ? "General"
+                                : effectiveReportsTo.kind === "user"
+                                  ? "Chief of Staff (first agent, reports to a person)"
+                                  : "Chief Executive (first agent)"}
                             </SelectItem>
                             {AGENT_ROLES.map((value) => (
                               <SelectItem key={value} value={value}>
@@ -1129,6 +1165,20 @@ function Setup({
                         </Select>
                         <p className="text-xs text-muted-foreground">
                           Each role seeds its own default instructions (a role brief and persona) that you can edit after hiring. The CEO additionally may manage other agents' work and is the Board chat contact.
+                        </p>
+                      </section>
+                      <section className="space-y-5">
+                        <h3 className="text-sm font-semibold">Reports to</h3>
+                        <ReportsToPicker
+                          agents={agents.data ?? []}
+                          users={userDirectory.data?.users ?? []}
+                          value={effectiveReportsTo}
+                          onChange={setReportsToChoice}
+                          currentUserId={currentUserId}
+                          chooseLabel="Choose manager…"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          The Board, a person on the Board, or another agent. A person who manages an agent receives its escalations and is the default responsible user for its runs.
                         </p>
                       </section>
                       {!["cursor_cloud", "hermes_gateway"].includes(

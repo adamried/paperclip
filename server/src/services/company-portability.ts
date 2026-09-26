@@ -80,6 +80,7 @@ import { agentInstructionsBundleMode, agentInstructionsService } from "./agent-i
 import { assetService } from "./assets.js";
 import { generateReadme } from "./company-export-readme.js";
 import { renderOrgChartPng, type OrgNode } from "../routes/org-chart-svg.js";
+import { ORG_CHART_BOARD_NAME, ORG_CHART_BOARD_NODE_ID } from "./org-chart-tree.js";
 import { companySkillService } from "./company-skills.js";
 import { companyService } from "./companies.js";
 import { validateCron } from "./cron.js";
@@ -3229,6 +3230,15 @@ function buildManifestFromPackageFiles(
       : {};
     const runtimeConfig = extensionRuntime ?? {};
     const title = asString(frontmatter.title);
+    // Human managers are instance-local identities and never round-trip
+    // through a package: export writes neither key. A hand-edited package may
+    // still carry one; drop it and say so, and the agent imports as reporting
+    // to the Board until a manager is chosen.
+    if (asString(extension.reportsToUserId) ?? asString(frontmatter.reportsToUser)) {
+      warnings.push(
+        `Agent ${slug} reported to a person in the source company; that link was not imported. Set a manager after import.`,
+      );
+    }
 
     manifest.agents.push({
       slug,
@@ -4732,7 +4742,16 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
     // Generate org chart PNG from manifest agents
     if (!options.preview && resolved.manifest.agents.length > 0) {
       try {
-        const orgNodes = buildOrgTreeFromManifest(resolved.manifest.agents);
+        // Manifests never carry human managers, so the exported chart shows
+        // the Board over the agent forest with no people in between.
+        const orgNodes: OrgNode[] = [{
+          kind: "board",
+          id: ORG_CHART_BOARD_NODE_ID,
+          name: ORG_CHART_BOARD_NAME,
+          role: "board",
+          status: "active",
+          reports: buildOrgTreeFromManifest(resolved.manifest.agents),
+        }];
         const pngBuffer = await renderOrgChartPng(orgNodes);
         finalFiles["images/org-chart.png"] = bufferToPortableBinaryFile(pngBuffer, "image/png");
       } catch {

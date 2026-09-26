@@ -14,6 +14,7 @@ import {
   sql,
 } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
+import { defaultAgentCardAddressee } from "./agent-manager.js";
 import {
   agents,
   companySecretProposals,
@@ -3315,6 +3316,33 @@ export function issueThreadInteractionService(
         resolverPolicy: policy.requestedResolverPolicy,
       };
 
+      // A human-facing card from an agent that reports to a person gets a
+      // default addressee (see defaultAgentCardAddressee); cards from agents
+      // that report to the Board stay open to the whole Board. `undefined`
+      // means "not specified"; an explicit null keeps it open.
+      let addresseeDefaulted = false;
+      if (
+        actor.agentId &&
+        normalizedData.addresseeAgentId == null &&
+        data.addresseeUserId === undefined
+      ) {
+        const defaultAddressee = await defaultAgentCardAddressee(
+          db,
+          issue.companyId,
+          actor.agentId,
+          data.sourceRunId ?? null,
+        );
+        if (defaultAddressee) {
+          normalizedData.addresseeUserId = defaultAddressee;
+          addresseeDefaulted = true;
+        }
+      }
+
+      // A defaulted addressee is derived state, so a retry must not 409 just
+      // because the manager or responsible user changed between attempts.
+      const idempotencyComparable = (existing: { addresseeUserId: string | null }) =>
+        addresseeDefaulted ? { ...normalizedData, addresseeUserId: existing.addresseeUserId } : normalizedData;
+
       if (normalizedData.addresseeAgentId && normalizedData.addresseeUserId) {
         throw unprocessable(
           "An issue-thread interaction cannot address both an agent and a user",
@@ -3381,7 +3409,7 @@ export function issueThreadInteractionService(
           idempotencyKey: normalizedData.idempotencyKey,
         });
         if (existing) {
-          if (!isEquivalentCreateRequest(existing, normalizedData, actor)) {
+          if (!isEquivalentCreateRequest(existing, idempotencyComparable(existing), actor)) {
             throw conflict(
               "Interaction idempotency key already exists for a different request",
               {
@@ -3503,7 +3531,7 @@ export function issueThreadInteractionService(
               summary: data.summary ?? null,
               createdByAgentId: actor.agentId ?? null,
               addresseeAgentId: data.addresseeAgentId ?? null,
-              addresseeUserId: data.addresseeUserId ?? null,
+              addresseeUserId: normalizedData.addresseeUserId ?? null,
               createdByUserId: actor.userId ?? null,
               payload: data.payload,
             })
@@ -3598,7 +3626,7 @@ export function issueThreadInteractionService(
           idempotencyKey: normalizedData.idempotencyKey,
         });
         if (!existing) throw error;
-        if (!isEquivalentCreateRequest(existing, normalizedData, actor)) {
+        if (!isEquivalentCreateRequest(existing, idempotencyComparable(existing), actor)) {
           throw conflict(
             "Interaction idempotency key already exists for a different request",
             {

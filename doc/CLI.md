@@ -549,7 +549,7 @@ npx paperclipai agent local-cli <agent-id-or-shortname> --company-id <company-id
 Agent configuration and runtime endpoints:
 
 ```sh
-npx paperclipai agent permissions:update <agent-id> --payload-json '{"canCreateAgents":true,"canCreateSkills":true,"canAssignTasks":true}'
+npx paperclipai agent permissions:update <agent-id> --payload-json '{"canCreateAgents":true,"canCreateSkills":true,"canAssignTasks":true,"agentChangeAuthority":"suggest"}'
 npx paperclipai agent configuration <agent-id>
 npx paperclipai agent config-revisions <agent-id>
 npx paperclipai agent config-revision:get <agent-id> <revision-id>

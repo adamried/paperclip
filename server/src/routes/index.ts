@@ -3,6 +3,7 @@ export { companyRoutes } from "./companies.js";
 export { companySkillRoutes } from "./company-skills.js";
 export { companySkillPolicyRoutes } from "./company-skill-policy.js";
 export { inboxAgentPolicyRoutes } from "./inbox-agent-policy.js";
+export { approvalDecisionPolicyRoutes } from "./approval-decision-policy.js";
 export { builtInAgentRoutes } from "./built-in-agents.js";
 export { folderRoutes } from "./folders.js";
 export { summarySlotRoutes } from "./summary-slots.js";

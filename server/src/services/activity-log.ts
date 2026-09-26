@@ -5,6 +5,7 @@ import { activityLog, agentApiKeys, companies, heartbeatRuns, issues } from "@pa
 import { isUuidLike, PLUGIN_EVENT_TYPES, type PluginEventType } from "@paperclipai/shared";
 import type { PluginEvent } from "@paperclipai/plugin-sdk";
 import { publishLiveEvent } from "./live-events.js";
+import { resolveActiveAgentManagerUserId } from "./agent-manager.js";
 import { redactCurrentUserValue } from "../log-redaction.js";
 import { sanitizeRecord } from "../redaction.js";
 import { logger } from "../middleware/logger.js";
@@ -138,6 +139,13 @@ export async function resolveResponsibleUserIdForActivity(db: Db, input: LogActi
       .then((rows) => rows[0] ?? null);
     const apiKeyResponsibleUserId = readNonEmptyString(apiKey?.responsibleUserId);
     if (apiKeyResponsibleUserId) return apiKeyResponsibleUserId;
+  }
+
+  // An agent that reports to a person acts on that person's behalf before the
+  // company default, matching run identity resolution.
+  if (agentId && isUuidLike(agentId)) {
+    const managerUserId = await resolveActiveAgentManagerUserId(db, input.companyId, agentId);
+    if (managerUserId) return managerUserId;
   }
 
   const company = await db

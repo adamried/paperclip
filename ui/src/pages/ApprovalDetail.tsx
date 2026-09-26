@@ -3,6 +3,8 @@ import { Link, useNavigate, useParams, useSearchParams } from "@/lib/router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { approvalsApi } from "../api/approvals";
 import { agentsApi } from "../api/agents";
+import { accessApi } from "../api/access";
+import { approvalAddressee, buildCompanyUserProfileMap } from "../lib/company-members";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { queryKeys } from "../lib/queryKeys";
@@ -51,6 +53,15 @@ export function ApprovalDetail() {
     queryFn: () => agentsApi.list(resolvedCompanyId ?? ""),
     enabled: !!resolvedCompanyId,
   });
+  const { data: userDirectory } = useQuery({
+    queryKey: queryKeys.access.companyUserDirectory(resolvedCompanyId ?? ""),
+    queryFn: () => accessApi.listUserDirectory(resolvedCompanyId ?? ""),
+    enabled: !!resolvedCompanyId && !!approval?.addresseeUserId,
+  });
+  const addressee = useMemo(
+    () => approvalAddressee(approval?.addresseeUserId, buildCompanyUserProfileMap(userDirectory?.users)),
+    [approval?.addresseeUserId, userDirectory],
+  );
 
   useEffect(() => {
     if (!approval?.companyId || approval.companyId === selectedCompanyId) return;
@@ -217,6 +228,12 @@ export function ApprovalDetail() {
                 name={agentNameById.get(approval.requestedByAgentId) ?? approval.requestedByAgentId.slice(0, 8)}
                 size="sm"
               />
+            </div>
+          )}
+          {addressee && (
+            <div className="flex items-center gap-2" data-testid="approval-addressee">
+              <span className="text-muted-foreground text-xs">Addressed to</span>
+              <Identity name={addressee.name} avatarUrl={addressee.image} size="sm" />
             </div>
           )}
           <ApprovalPayloadRenderer type={approval.type} payload={payload} />

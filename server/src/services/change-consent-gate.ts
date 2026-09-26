@@ -19,6 +19,11 @@ export function agentProfileChangeTargetKey(agentId: string) {
   return `agent:${agentId}:profile`;
 }
 
+/** Changing who an agent reports to is its own consent target, never spent by a profile consent. */
+export function agentManagerChangeTargetKey(agentId: string) {
+  return `agent:${agentId}:manager`;
+}
+
 export function skillChangeTargetKey(skillId: string) {
   return `skill:${skillId}`;
 }

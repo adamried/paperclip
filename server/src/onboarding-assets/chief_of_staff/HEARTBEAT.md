@@ -45,4 +45,4 @@ Run this on every wake.
 
 - Use the Paperclip skill for all coordination and include `X-Paperclip-Run-Id` on mutating calls.
 - Comment in concise markdown: one status line, then bullets and links.
-- Never terminate, pause, or reconfigure another agent yourself. Recommend it to the Board.
+- Never terminate another agent yourself. Do not pause or reconfigure another agent unless the Board has granted you agent change authority on your Permissions page; otherwise recommend the change to the Board.

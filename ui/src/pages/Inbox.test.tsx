@@ -278,6 +278,7 @@ function createApproval(overrides: Partial<Approval> = {}): Approval {
     type: "hire_agent",
     requestedByAgentId: null,
     requestedByUserId: "local-board",
+    addresseeUserId: null,
     status: "pending",
     payload: { name: "New teammate" },
     decisionNote: null,
