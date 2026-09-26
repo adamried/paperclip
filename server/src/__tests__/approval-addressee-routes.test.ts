@@ -25,6 +25,7 @@ const mockAccessService = vi.hoisted(() => ({ decide: vi.fn() }));
 const mockAgentManager = vi.hoisted(() => ({
   resolveActiveAgentManagerUserId: vi.fn(),
   assertHumanManagerEligible: vi.fn(),
+  assertAgentMayAssignManager: vi.fn(),
 }));
 const mockDecisionPolicies = vi.hoisted(() => ({ get: vi.fn() }));
 const mockAssertDecisionAllowed = vi.hoisted(() => vi.fn());
@@ -170,6 +171,47 @@ describe("approval addressee and decision policy", () => {
       .send({ type: "request_board_approval", payload: {} });
     expect(res.status).toBe(201);
     expect(mockApprovalService.create).toHaveBeenCalledWith("company-1", expect.objectContaining({ addresseeUserId: null }));
+  });
+
+  it("holds an agent-filed hire request to the own-manager rule", async () => {
+    const { forbidden } = await import("../errors.js");
+    mockAgentManager.resolveActiveAgentManagerUserId.mockResolvedValue("manager-1");
+    mockSecretService.normalizeHireApprovalPayloadForPersistence.mockImplementation(async (_companyId: string, payload: unknown) => payload);
+    mockAgentManager.assertAgentMayAssignManager.mockRejectedValue(
+      forbidden("Agents may only assign their own manager as an agent's manager", { code: "agent_manager_assignment_not_allowed" }),
+    );
+
+    const res = await request(appFor({ ...agentActor, runId: null }))
+      .post("/api/companies/company-1/approvals")
+      .send({ type: "hire_agent", payload: { name: "Helper", role: "general", reportsToUserId: "user-9" } });
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("agent_manager_assignment_not_allowed");
+    expect(mockAgentManager.assertAgentMayAssignManager).toHaveBeenCalledWith(expect.anything(), "company-1", "agent-1", "user-9");
+    expect(mockApprovalService.create).not.toHaveBeenCalled();
+  });
+
+  it("holds a resubmitted hire payload to the own-manager rule", async () => {
+    const { forbidden } = await import("../errors.js");
+    mockApprovalService.getById.mockResolvedValue({
+      ...pendingApproval(null),
+      type: "hire_agent",
+      status: "revision_requested",
+      payload: { name: "Helper", role: "general" },
+    });
+    mockSecretService.normalizeHireApprovalPayloadForPersistence.mockImplementation(async (_companyId: string, payload: unknown) => payload);
+    mockAgentManager.assertAgentMayAssignManager.mockRejectedValue(
+      forbidden("Agents may only assign their own manager as an agent's manager", { code: "agent_manager_assignment_not_allowed" }),
+    );
+
+    const res = await request(appFor({ ...agentActor, runId: null }))
+      .post("/api/approvals/approval-1/resubmit")
+      .send({ payload: { name: "Helper", role: "general", reportsToUserId: "user-9" } });
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("agent_manager_assignment_not_allowed");
+    expect(mockAgentManager.assertAgentMayAssignManager).toHaveBeenCalledWith(expect.anything(), "company-1", "agent-1", "user-9");
+    expect(mockApprovalService.resubmit).not.toHaveBeenCalled();
   });
 
   it("runs the shared decision gate before approve, reject, and request-revision", async () => {

@@ -414,28 +414,30 @@ async function resolveResponsibleUserIdForIssueCreate(
     input,
     "actorResponsibleUserId",
   );
-  if (actorResponsibleUserId) return actorResponsibleUserId;
-
-  if (input.actorRunId) {
-    const actorRun = await reader
-      .select({
-        responsibleUserId: heartbeatRuns.responsibleUserId,
-        identityCause: runIdentityContexts.cause,
-      })
-      .from(heartbeatRuns)
-      .leftJoin(runIdentityContexts, eq(runIdentityContexts.id, heartbeatRuns.activeIdentityContextId))
-      .where(
-        and(
-          eq(heartbeatRuns.companyId, companyId),
-          eq(heartbeatRuns.id, input.actorRunId),
-        ),
-      )
-      .then((rows) => rows[0] ?? null);
-    // A run acting under its agent's human manager is a per-run fallback, not
-    // an owner to stamp onto every child issue the agent creates.
-    if (actorRun?.responsibleUserId && actorRun.identityCause !== "agent_manager") {
-      return actorRun.responsibleUserId;
-    }
+  // A run acting under its agent's human manager carries that person as its
+  // identity (both here and as the run's responsible user). That is a per-run
+  // fallback, not an owner to stamp onto every child issue the agent creates,
+  // so both sources are skipped when the run's identity cause says so.
+  const actorRun = input.actorRunId
+    ? await reader
+        .select({
+          responsibleUserId: heartbeatRuns.responsibleUserId,
+          identityCause: runIdentityContexts.cause,
+        })
+        .from(heartbeatRuns)
+        .leftJoin(runIdentityContexts, eq(runIdentityContexts.id, heartbeatRuns.activeIdentityContextId))
+        .where(
+          and(
+            eq(heartbeatRuns.companyId, companyId),
+            eq(heartbeatRuns.id, input.actorRunId),
+          ),
+        )
+        .then((rows) => rows[0] ?? null)
+    : null;
+  const actorIdentityIsManagerFallback = actorRun?.identityCause === "agent_manager";
+  if (actorResponsibleUserId && !actorIdentityIsManagerFallback) return actorResponsibleUserId;
+  if (actorRun?.responsibleUserId && !actorIdentityIsManagerFallback) {
+    return actorRun.responsibleUserId;
   }
 
   if (input.parentId) {

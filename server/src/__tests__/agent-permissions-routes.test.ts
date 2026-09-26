@@ -223,7 +223,13 @@ function registerModuleMocks() {
   }));
 }
 
-function createDbStub(options: { requireBoardApprovalForNewAgents?: boolean } = {}) {
+type DbStubOptions = {
+  requireBoardApprovalForNewAgents?: boolean;
+  /** Extra columns every stubbed select row carries (agent + membership lookups share the one shape). */
+  selectRow?: Record<string, unknown>;
+};
+
+function createDbStub(options: DbStubOptions = {}) {
   return {
     select: vi.fn().mockReturnValue({
       from: vi.fn().mockReturnValue({
@@ -233,6 +239,7 @@ function createDbStub(options: { requireBoardApprovalForNewAgents?: boolean } = 
               id: companyId,
               name: "Paperclip",
               requireBoardApprovalForNewAgents: options.requireBoardApprovalForNewAgents ?? false,
+              ...(options.selectRow ?? {}),
             }])),
           ),
         }),
@@ -277,7 +284,7 @@ describe.sequential("agent permission routes", () => {
     return { errorHandler, agentRoutes };
   });
 
-  function createApp(actor: Record<string, unknown>, dbOptions: { requireBoardApprovalForNewAgents?: boolean } = {}) {
+  function createApp(actor: Record<string, unknown>, dbOptions: DbStubOptions = {}) {
     const { errorHandler, agentRoutes } = routeModules.value;
     const app = express();
     app.use(express.json());
@@ -2053,6 +2060,82 @@ describe.sequential("agent permission routes", () => {
       expect(res.status).toBe(403);
     }
     expect(mockAgentService.update).not.toHaveBeenCalled();
+  });
+
+  it("stops an agent assigning anyone but its own manager, before any consent is spent", async () => {
+    const otherAgentId = "44444444-4444-4444-8444-444444444444";
+    mockAgentService.getById.mockImplementation(async (id: string) =>
+      id === otherAgentId ? { ...baseAgent, id: otherAgentId, name: "Peer" } : null);
+    mockAccessService.decide.mockResolvedValue({ allowed: true, reason: "allow_test", explanation: "Allowed by test." });
+
+    // The acting agent reports to manager-1 (the stub row doubles as the
+    // agent row and manager-1's active membership).
+    const app = await createApp(
+      { type: "agent", agentId, companyId, runId: "run-1", source: "agent_key" },
+      { selectRow: { reportsToUserId: "manager-1", status: "active", membershipRole: "owner" } },
+    );
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${otherAgentId}`)
+      .send({ reportsToUserId: "someone-else" }));
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("agent_manager_assignment_not_allowed");
+    expect(mockAgentService.update).not.toHaveBeenCalled();
+    // The own-manager rule runs before the change-consent guard.
+    expect(mockAccessService.decide).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "agent_config:update", scope: expect.objectContaining({ requiresChangeGrant: true }) }),
+    );
+  });
+
+  it("lets an agent with a change grant assign its own manager to an agent it edits", async () => {
+    const otherAgentId = "44444444-4444-4444-8444-444444444444";
+    const peer = { ...baseAgent, id: otherAgentId, name: "Peer" };
+    mockAgentService.getById.mockImplementation(async (id: string) => (id === otherAgentId ? peer : null));
+    mockAgentService.update.mockResolvedValue({ ...peer, reportsToUserId: "manager-1" });
+    mockAccessService.decide.mockResolvedValue({ allowed: true, reason: "allow_test", explanation: "Allowed by test." });
+
+    const app = await createApp(
+      { type: "agent", agentId, companyId, runId: "run-1", source: "agent_key" },
+      { selectRow: { reportsToUserId: "manager-1", status: "active", membershipRole: "owner" } },
+    );
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${otherAgentId}`)
+      .send({ reportsToUserId: "manager-1" }));
+
+    expect(res.status).toBe(200);
+    expect(mockAgentService.update).toHaveBeenCalledWith(
+      otherAgentId,
+      expect.objectContaining({ reportsToUserId: "manager-1" }),
+      expect.anything(),
+    );
+  });
+
+  it("holds an agent's configuration rollback to the own-manager rule", async () => {
+    const revisionId = "33333333-3333-4333-8333-333333333333";
+    mockAgentService.getById.mockImplementation(async (id: string) => (id === agentId ? { ...baseAgent } : null));
+    mockAgentService.getConfigRevision.mockResolvedValue({
+      id: revisionId,
+      afterConfig: {
+        adapterType: "process",
+        adapterConfig: {},
+        runtimeConfig: {},
+        reportsTo: null,
+        reportsToUserId: "someone-else",
+      },
+    });
+    mockAccessService.decide.mockResolvedValue({ allowed: true, reason: "allow_test", explanation: "Allowed by test." });
+
+    const app = await createApp({ type: "agent", agentId, companyId, runId: "run-1", source: "agent_key" });
+
+    const res = await requestApp(app, (baseUrl) =>
+      request(baseUrl).post(`/api/agents/${agentId}/config-revisions/${revisionId}/rollback`),
+    );
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("agent_manager_assignment_not_allowed");
+    expect(mockAgentService.rollbackConfigRevision).not.toHaveBeenCalled();
   });
 
   it("rejects CEO permission updates outside the caller company scope", async () => {

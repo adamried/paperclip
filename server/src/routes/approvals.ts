@@ -1,7 +1,7 @@
 import { Router, type Request } from "express";
 import { eq } from "drizzle-orm";
 import { heartbeatRuns, type Db } from "@paperclipai/db";
-import { assertHumanManagerEligible, resolveActiveAgentManagerUserId } from "../services/agent-manager.js";
+import { assertAgentMayAssignManager, assertHumanManagerEligible, resolveActiveAgentManagerUserId } from "../services/agent-manager.js";
 import { assertApprovalDecisionAllowed as assertApprovalDecisionAllowedForApproval } from "../services/approval-decision-policy.js";
 import { unprocessable } from "../errors.js";
 import {
@@ -26,6 +26,12 @@ import { redactEventPayload } from "../redaction.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
 import { issueService } from "../services/issues.js";
 import { REVIEW_PATH_RECOVERY_INSTRUCTION } from "../services/recovery/review-path-recovery.js";
+
+function readPayloadReportsToUserId(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const value = (payload as Record<string, unknown>).reportsToUserId;
+  return typeof value === "string" && value.trim() ? value : null;
+}
 
 function redactApprovalPayload<T extends { payload: Record<string, unknown> }>(approval: T): T {
   return {
@@ -286,6 +292,10 @@ export function approvalRoutes(
         ? actor.actorId
         : approvalInput.requestedByAgentId ?? null;
     const addresseeUserId = await resolveApprovalAddressee(req, companyId, approvalInput.addresseeUserId);
+    // A hire payload filed by an agent obeys the same manager rule as a direct hire.
+    if (req.actor.type === "agent" && approvalInput.type === "hire_agent") {
+      await assertAgentMayAssignManager(db, companyId, req.actor.agentId ?? null, readPayloadReportsToUserId(normalizedPayload));
+    }
     const approval = await svc.create(companyId, {
       ...approvalInput,
       payload: normalizedPayload,
@@ -530,6 +540,11 @@ export function approvalRoutes(
           )
         : req.body.payload
       : undefined;
+    // A resubmitted hire payload cannot smuggle in a manager the agent could
+    // not assign directly.
+    if (req.actor.type === "agent" && existing.type === "hire_agent" && normalizedPayload) {
+      await assertAgentMayAssignManager(db, existing.companyId, req.actor.agentId ?? null, readPayloadReportsToUserId(normalizedPayload));
+    }
     const approval = await svc.resubmit(id, normalizedPayload);
     const actor = getActorInfo(req);
     await logActivity(db, {

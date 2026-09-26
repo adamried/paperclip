@@ -2,7 +2,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { agents, authUsers, companyMemberships, heartbeatRuns } from "@paperclipai/db";
 import type { ChainOfCommandRoot } from "@paperclipai/shared";
-import { unprocessable } from "../errors.js";
+import { forbidden, unprocessable } from "../errors.js";
 import { normalizeHumanRole } from "./company-member-roles.js";
 import type { OrgChartUserSummary } from "./org-chart-tree.js";
 
@@ -87,6 +87,29 @@ export async function resolveActiveAgentManagerUserId(
   if (!userId) return null;
   const membership = await findHumanManagerMembership(db, companyId, userId);
   return humanManagerMembershipIsActive(membership) ? userId : null;
+}
+
+/**
+ * An agent may point an agent (itself, one it hires, one it edits, or one it
+ * restores from a revision) at the Board, at an agent, or at the acting
+ * agent's own human manager, never at some other person: a human manager
+ * receives the agent's escalations and lends it their identity, which only
+ * that person or the Board can decide. Board actors are not subject to this.
+ */
+export async function assertAgentMayAssignManager(
+  db: Db,
+  companyId: string,
+  actorAgentId: string | null | undefined,
+  reportsToUserId: string | null | undefined,
+) {
+  if (!reportsToUserId) return;
+  const ownManager = actorAgentId ? await resolveActiveAgentManagerUserId(db, companyId, actorAgentId) : null;
+  if (reportsToUserId !== ownManager) {
+    throw forbidden("Agents may only assign their own manager as an agent's manager", {
+      code: "agent_manager_assignment_not_allowed",
+      reportsToUserId,
+    });
+  }
 }
 
 /**

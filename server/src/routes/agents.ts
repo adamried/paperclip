@@ -162,7 +162,7 @@ import {
   orgChartManagerUserIds,
   type OrgChartAgentNode,
 } from "../services/org-chart-tree.js";
-import { loadOrgChartUserSummaries, resolveActiveAgentManagerUserId } from "../services/agent-manager.js";
+import { assertAgentMayAssignManager, loadOrgChartUserSummaries, resolveActiveAgentManagerUserId } from "../services/agent-manager.js";
 import { assertApprovalDecisionAllowed } from "../services/approval-decision-policy.js";
 import type { OrgTreeNode } from "@paperclipai/shared";
 import {
@@ -1734,28 +1734,14 @@ export function agentRoutes(
     );
   }
 
-  /**
-   * An agent creating or hiring another agent may make it report to the
-   * Board, to an agent, or to the acting agent's own human manager, never to
-   * some other person: a human manager receives the new agent's escalations
-   * and lends it their identity, which only that person (or the Board) can
-   * decide.
-   */
+  /** Agent actors may only assign their own manager (or none); see assertAgentMayAssignManager. */
   async function assertAgentActorManagerAssignment(
     req: Request,
     companyId: string,
     reportsToUserId: string | null | undefined,
   ) {
-    if (req.actor.type !== "agent" || !reportsToUserId) return;
-    const ownManager = req.actor.agentId
-      ? await resolveActiveAgentManagerUserId(db, companyId, req.actor.agentId)
-      : null;
-    if (reportsToUserId !== ownManager) {
-      throw forbidden("Agents may only assign their own manager as a new agent's manager", {
-        code: "agent_manager_assignment_not_allowed",
-        reportsToUserId,
-      });
-    }
+    if (req.actor.type !== "agent") return;
+    await assertAgentMayAssignManager(db, companyId, req.actor.agentId ?? null, reportsToUserId);
   }
 
   async function assertCanCreateAgentsForCompany(req: Request, companyId: string) {
@@ -4373,6 +4359,9 @@ export function agentRoutes(
       req.actor.type === "agent" &&
       (rollbackReportsTo !== (existing.reportsTo ?? null) || rollbackReportsToUserId !== (existing.reportsToUserId ?? null))
     ) {
+      if (rollbackReportsToUserId !== (existing.reportsToUserId ?? null)) {
+        await assertAgentActorManagerAssignment(req, existing.companyId, rollbackReportsToUserId);
+      }
       await assertCanApplyProtectedAgentChange(req, existing, [agentManagerChangeTargetKey(existing.id)]);
     }
     assertProviderTraceSettingTransition(
@@ -5483,6 +5472,9 @@ export function agentRoutes(
       (hasOwn(patchData, "reportsTo") && (patchData.reportsTo ?? null) !== (existing.reportsTo ?? null)) ||
       (hasOwn(patchData, "reportsToUserId") && (patchData.reportsToUserId ?? null) !== (existing.reportsToUserId ?? null));
     if (req.actor.type === "agent" && changesManager) {
+      // The own-manager rule first: it needs no consent and fails fast, so a
+      // change consent is not spent on a request that can never be applied.
+      await assertAgentActorManagerAssignment(req, existing.companyId, patchData.reportsToUserId as string | null | undefined);
       await assertCanApplyProtectedAgentChange(req, existing, [agentManagerChangeTargetKey(existing.id)]);
     }
     const touchesProfileFields = touchesAgentProfileChangeConsentFields(patchData);

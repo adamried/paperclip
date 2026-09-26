@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { defaultAgentCardAddressee } from "../services/agent-manager.js";
+import { assertAgentMayAssignManager, defaultAgentCardAddressee } from "../services/agent-manager.js";
 
 /**
  * A minimal drizzle-shaped fake: each `select` call answers with the next
@@ -61,5 +61,35 @@ describe("defaultAgentCardAddressee", () => {
       [{ status: "suspended", membershipRole: "owner" }],
     ]);
     expect(await defaultAgentCardAddressee(suspendedManager, "company-1", "agent-1", "run-1")).toBeNull();
+  });
+});
+
+describe("assertAgentMayAssignManager", () => {
+  it("allows no manager at all without looking anything up", async () => {
+    const db = fakeDb([]);
+    await expect(assertAgentMayAssignManager(db, "company-1", "agent-1", null)).resolves.toBeUndefined();
+    await expect(assertAgentMayAssignManager(db, "company-1", "agent-1", undefined)).resolves.toBeUndefined();
+    expect((db as { select: ReturnType<typeof vi.fn> }).select).not.toHaveBeenCalled();
+  });
+
+  it("allows the acting agent's own active manager", async () => {
+    const db = fakeDb([[{ reportsToUserId: "manager-1" }], [active]]);
+    await expect(assertAgentMayAssignManager(db, "company-1", "agent-1", "manager-1")).resolves.toBeUndefined();
+  });
+
+  it("refuses anyone else, and refuses the own manager once that person is inactive", async () => {
+    const someoneElse = fakeDb([[{ reportsToUserId: "manager-1" }], [active]]);
+    await expect(assertAgentMayAssignManager(someoneElse, "company-1", "agent-1", "user-9")).rejects.toMatchObject({
+      status: 403,
+      details: { code: "agent_manager_assignment_not_allowed" },
+    });
+
+    const suspended = fakeDb([[{ reportsToUserId: "manager-1" }], [{ status: "suspended", membershipRole: "owner" }]]);
+    await expect(assertAgentMayAssignManager(suspended, "company-1", "agent-1", "manager-1")).rejects.toMatchObject({
+      status: 403,
+    });
+
+    const noActor = fakeDb([]);
+    await expect(assertAgentMayAssignManager(noActor, "company-1", null, "manager-1")).rejects.toMatchObject({ status: 403 });
   });
 });

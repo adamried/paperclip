@@ -157,7 +157,13 @@ export function approvalService(db: Db) {
           const payload = existing.payload as Record<string, unknown>;
           const payloadAgentId = typeof payload.agentId === "string" ? payload.agentId : null;
           const pendingAgent = payloadAgentId ? await agentsSvc.getById(payloadAgentId) : null;
-          if (!pendingAgent) return;
+          // Only a still-pending agent in this approval's company is activated
+          // from the payload; anything else is not this approval's to validate.
+          if (
+            !pendingAgent ||
+            pendingAgent.status !== "pending_approval" ||
+            pendingAgent.companyId !== existing.companyId
+          ) return;
           const managerPatch: { reportsTo?: string | null; reportsToUserId?: string | null } = {};
           if (Object.prototype.hasOwnProperty.call(payload, "reportsTo")) {
             managerPatch.reportsTo = typeof payload.reportsTo === "string" ? payload.reportsTo : null;

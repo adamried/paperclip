@@ -107,6 +107,39 @@ describe("approvalService resolution idempotency", () => {
     expect(mockNotifyHireApproved).toHaveBeenCalledTimes(1);
   });
 
+  it("validates a pending hire's manager fields before the approval flips to approved", async () => {
+    const pendingAgent = { id: "agent-1", companyId: "company-1", status: "pending_approval" };
+    mockAgentService.getById.mockResolvedValue(pendingAgent as never);
+    mockAgentService.validateManagerPatch.mockRejectedValue(new Error("agent_manager_conflict"));
+    const payload = { agentId: "agent-1", reportsTo: "ceo-1", reportsToUserId: "user-1" };
+    const dbStub = createDbStub([[{ ...createApproval("pending"), payload }]], []);
+
+    const svc = approvalService(dbStub.db as any);
+    await expect(svc.approve("approval-1", "board", "ship it")).rejects.toThrow("agent_manager_conflict");
+
+    expect(mockAgentService.validateManagerPatch).toHaveBeenCalledWith(
+      "company-1",
+      "agent-1",
+      { reportsTo: "ceo-1", reportsToUserId: "user-1" },
+      pendingAgent,
+    );
+    // The status never flipped, so the approval stays decidable.
+    expect(dbStub.db.update).not.toHaveBeenCalled();
+    expect(mockAgentService.activatePendingApproval).not.toHaveBeenCalled();
+  });
+
+  it("skips manager validation when the payload's agent is not this approval's pending agent", async () => {
+    mockAgentService.getById.mockResolvedValue({ id: "agent-1", companyId: "other-company", status: "pending_approval" } as never);
+    const approved = { ...createApproval("approved"), payload: { agentId: "agent-1", reportsToUserId: "user-1" } };
+    const dbStub = createDbStub([[{ ...createApproval("pending"), payload: approved.payload }]], [approved]);
+
+    const svc = approvalService(dbStub.db as any);
+    const result = await svc.approve("approval-1", "board", "ship it");
+
+    expect(result.applied).toBe(true);
+    expect(mockAgentService.validateManagerPatch).not.toHaveBeenCalled();
+  });
+
   it("creates the agent from payload when approval does not reference a pending agent", async () => {
     const approved = {
       ...createApproval("approved"),
