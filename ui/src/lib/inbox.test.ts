@@ -29,6 +29,7 @@ import {
   getRecentTouchedIssues,
   getUnreadTouchedIssues,
   groupInboxWorkItems,
+  isApprovalVisibleInMine,
   isInboxEntityDismissed,
   isMineInboxTab,
   loadInboxFilterPreferences,
@@ -81,6 +82,7 @@ function makeApproval(status: Approval["status"]): Approval {
     type: "hire_agent",
     requestedByAgentId: null,
     requestedByUserId: null,
+    addresseeUserId: null,
     status,
     payload: {},
     decisionNote: null,
@@ -1587,5 +1589,25 @@ describe("inbox helpers", () => {
     expect(shouldResetInboxWorkspaceGrouping("workspace", false, true)).toBe(true);
     expect(shouldResetInboxWorkspaceGrouping("workspace", true, true)).toBe(false);
     expect(shouldResetInboxWorkspaceGrouping("none", false, true)).toBe(false);
+  });
+});
+
+describe("isApprovalVisibleInMine with an addressee", () => {
+  it("shows an addressed approval only to its addressee while it is actionable", () => {
+    const addressed = { ...makeApproval("pending"), addresseeUserId: "user-1" };
+    expect(isApprovalVisibleInMine(addressed, "user-1")).toBe(true);
+    expect(isApprovalVisibleInMine(addressed, "user-2")).toBe(false);
+    expect(isApprovalVisibleInMine(addressed, null)).toBe(false);
+  });
+
+  it("keeps unaddressed actionable approvals visible to everyone", () => {
+    expect(isApprovalVisibleInMine(makeApproval("pending"), "user-2")).toBe(true);
+    expect(isApprovalVisibleInMine(makeApproval("pending"), null)).toBe(true);
+  });
+
+  it("falls back to requester or decider once the approval is settled", () => {
+    const settled = { ...makeApproval("approved"), addresseeUserId: "user-1", decidedByUserId: "user-2" };
+    expect(isApprovalVisibleInMine(settled, "user-2")).toBe(true);
+    expect(isApprovalVisibleInMine(settled, "user-1")).toBe(false);
   });
 });

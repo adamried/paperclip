@@ -52,8 +52,9 @@ export async function findHumanManagerMembership(
         eq(companyMemberships.principalType, "user"),
         eq(companyMemberships.principalId, userId),
       ),
-    )
-    .limit(1);
+    );
+  // Unique per (company, principal type, principal id); no LIMIT so lighter
+  // query stubs in tests keep working.
   return rows[0] ?? null;
 }
 
@@ -81,8 +82,7 @@ export async function resolveActiveAgentManagerUserId(
   const rows = await db
     .select({ reportsToUserId: agents.reportsToUserId })
     .from(agents)
-    .where(and(eq(agents.id, agentId), eq(agents.companyId, companyId)))
-    .limit(1);
+    .where(and(eq(agents.id, agentId), eq(agents.companyId, companyId)));
   const userId = rows[0]?.reportsToUserId ?? null;
   if (!userId) return null;
   const membership = await findHumanManagerMembership(db, companyId, userId);
@@ -148,8 +148,7 @@ export async function loadChainOfCommandRoot(
     db
       .select({ id: authUsers.id, name: authUsers.name, email: authUsers.email, image: authUsers.image })
       .from(authUsers)
-      .where(eq(authUsers.id, reportsToUserId))
-      .limit(1),
+      .where(eq(authUsers.id, reportsToUserId)),
   ]);
   const user = userRows[0] ?? null;
   return {

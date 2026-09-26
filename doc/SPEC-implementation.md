@@ -578,6 +578,7 @@ Detailed ownership, execution, blocker, active-run watchdog, crash-recovery, and
 | Create company | yes | no |
 | Hire/create agent | yes (direct) | request via approval |
 | Pause/resume agent | yes | pause: no; resume: direct `agents:configure` grant only |
+| Decide an approval addressed to a person | yes, unless the addressee set `addressee_only` (then only they can) | no |
 | Reconfigure another agent (profile, instructions, resume) | yes | none by default; Board grants `suggest` (consent-gated `agents:suggest-changes`) or `direct` (`agents:configure`) via `agentChangeAuthority` on `PATCH /agents/:agentId/permissions`; the root CEO receives `direct` automatically |
 | Create/update task | yes | yes |
 | Force reassign task | yes | limited |
@@ -1020,8 +1021,33 @@ Board) or, when the customer runs the company, a `chief_of_staff` that reports
 to the onboarding user. The server gives a non-CEO first hire the
 chief-of-staff onboarding persona.
 
-Escalation routing, default responsible user, and approval addressing for
-human-managed agents are specified separately once implemented.
+### 9.12.1 What a human manager receives
+
+- **Responsible user.** When a run, routine, or activity has no work-item or
+  requester identity to act under, the agent's active human manager is used
+  before the company default. Runs record `executionIdentityCause:
+  "agent_manager"`, distinct from `"company_default"`, which several consumers
+  treat as "no real identity".
+- **Approvals.** `approvals.addressee_user_id` names the person an approval is
+  addressed to. An agent's request (including a hire request) defaults to its
+  active human manager. An agent may pass `addresseeUserId` only equal to its
+  own manager (`422 approval_addressee_not_allowed`); a Board actor may address
+  any active non-viewer member, or `null` for the Board at large. Addressed
+  approvals appear in the addressee's inbox only; the Approvals page lists all.
+- **Interactions.** A human-facing issue-thread interaction created by an agent
+  with no addressee given defaults `addresseeUserId` to the agent's manager
+  (an explicit `null` keeps it open to the Board). The addressee is then the
+  sole human resolver, as for any addressed interaction.
+- **Decision policy.** `user_approval_decision_policies` holds a per-person,
+  per-company choice: `any_board` (default) or `addressee_only`. Under
+  `addressee_only`, approve, reject, and request-revision on an approval
+  addressed to that person return `403 approval_addressee_only` (with
+  `addresseeUserId` and `addresseeName`) for every other user, instance admins
+  included; it is the addressee's consent boundary. Endpoints mirror the inbox
+  agent policy: `GET/PUT /api/companies/:companyId/users/me/approval-decision-policy`
+  and the `users/:userId` variant for permission administrators.
+- An inactive manager (suspended or downgraded to viewer) is skipped by all of
+  the above and the Board / company default applies.
 
 ## 10. API Contract (REST)
 

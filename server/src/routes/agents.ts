@@ -161,7 +161,7 @@ import {
   orgChartManagerUserIds,
   type OrgChartAgentNode,
 } from "../services/org-chart-tree.js";
-import { loadOrgChartUserSummaries } from "../services/agent-manager.js";
+import { loadOrgChartUserSummaries, resolveActiveAgentManagerUserId } from "../services/agent-manager.js";
 import type { OrgTreeNode } from "@paperclipai/shared";
 import {
   instanceSettingsService,
@@ -4645,10 +4645,16 @@ export function agentRoutes(
           redactEventPayload(
             ((normalizedHireInput.metadata ?? agent.metadata ?? {}) as Record<string, unknown>),
           ) ?? {};
+        // An agent's hire request is addressed to its human manager, if any.
+        const hireApprovalAddresseeUserId =
+          actor.actorType === "agent" && actor.actorId
+            ? await resolveActiveAgentManagerUserId(db, companyId, actor.actorId)
+            : null;
         approval = await approvalsSvc.create(companyId, {
           type: "hire_agent",
           requestedByAgentId: actor.actorType === "agent" ? actor.actorId : null,
           requestedByUserId: actor.actorType === "user" ? actor.actorId : null,
+          addresseeUserId: hireApprovalAddresseeUserId,
           status: "pending",
           payload: {
             name: normalizedHireInput.name,

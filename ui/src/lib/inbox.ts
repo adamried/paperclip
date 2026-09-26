@@ -802,7 +802,12 @@ export function isApprovalVisibleInMine(
   approval: Approval,
   currentUserId?: string | null,
 ): boolean {
-  if (ACTIONABLE_APPROVAL_STATUSES.has(approval.status)) return true;
+  if (ACTIONABLE_APPROVAL_STATUSES.has(approval.status)) {
+    // An approval addressed to a person is in that person's inbox only; the
+    // Approvals page still lists it for everyone.
+    const addressee = approval.addresseeUserId ?? null;
+    return addressee === null || addressee === currentUserId;
+  }
   if (!currentUserId) return false;
   return approval.requestedByUserId === currentUserId || approval.decidedByUserId === currentUserId;
 }

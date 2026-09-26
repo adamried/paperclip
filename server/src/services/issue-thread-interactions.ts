@@ -14,6 +14,7 @@ import {
   sql,
 } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
+import { resolveActiveAgentManagerUserId } from "./agent-manager.js";
 import {
   agents,
   companySecretProposals,
@@ -3315,6 +3316,23 @@ export function issueThreadInteractionService(
         resolverPolicy: policy.requestedResolverPolicy,
       };
 
+      // A human-facing card from an agent that reports to a person goes to
+      // that person unless the agent said otherwise. `undefined` means "not
+      // specified"; an explicit null keeps it open to the whole Board.
+      let addresseeSource: "explicit" | "agent_manager" | null =
+        data.addresseeUserId !== undefined ? "explicit" : null;
+      if (
+        actor.agentId &&
+        normalizedData.addresseeAgentId == null &&
+        data.addresseeUserId === undefined
+      ) {
+        const managerUserId = await resolveActiveAgentManagerUserId(db, issue.companyId, actor.agentId);
+        if (managerUserId) {
+          normalizedData.addresseeUserId = managerUserId;
+          addresseeSource = "agent_manager";
+        }
+      }
+
       if (normalizedData.addresseeAgentId && normalizedData.addresseeUserId) {
         throw unprocessable(
           "An issue-thread interaction cannot address both an agent and a user",
@@ -3503,7 +3521,7 @@ export function issueThreadInteractionService(
               summary: data.summary ?? null,
               createdByAgentId: actor.agentId ?? null,
               addresseeAgentId: data.addresseeAgentId ?? null,
-              addresseeUserId: data.addresseeUserId ?? null,
+              addresseeUserId: normalizedData.addresseeUserId ?? null,
               createdByUserId: actor.userId ?? null,
               payload: data.payload,
             })

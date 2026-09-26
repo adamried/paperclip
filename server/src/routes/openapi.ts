@@ -153,6 +153,7 @@ import {
   evaluateSkillPolicySchema,
   replaceSkillPolicySchema,
   updateInboxAgentPolicySchema,
+  updateApprovalDecisionPolicySchema,
   // Issue tree
   createIssueTreeHoldSchema,
   previewIssueTreeControlSchema,
@@ -7724,6 +7725,58 @@ registry.registerPath({
   request: {
     params: z.object({ companyId: z.string(), userId: z.string() }),
     body: jsonBody(updateInboxAgentPolicySchema),
+  },
+  responses: {
+    200: r.ok(),
+    401: r.unauthorized,
+    403: r.forbidden,
+    422: r.unprocessable,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/users/me/approval-decision-policy",
+  tags: ["companies"],
+  summary: "Get the current user's approval decision policy",
+  request: { params: z.object({ companyId: z.string() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "put",
+  path: "/api/companies/{companyId}/users/me/approval-decision-policy",
+  tags: ["companies"],
+  summary: "Update the current user's approval decision policy",
+  request: {
+    params: z.object({ companyId: z.string() }),
+    body: jsonBody(updateApprovalDecisionPolicySchema),
+  },
+  responses: {
+    200: r.ok(),
+    401: r.unauthorized,
+    403: r.forbidden,
+    422: r.unprocessable,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/users/{userId}/approval-decision-policy",
+  tags: ["companies"],
+  summary: "Get a company user's approval decision policy",
+  request: { params: z.object({ companyId: z.string(), userId: z.string() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "put",
+  path: "/api/companies/{companyId}/users/{userId}/approval-decision-policy",
+  tags: ["companies"],
+  summary: "Update a company user's approval decision policy",
+  request: {
+    params: z.object({ companyId: z.string(), userId: z.string() }),
+    body: jsonBody(updateApprovalDecisionPolicySchema),
   },
   responses: {
     200: r.ok(),

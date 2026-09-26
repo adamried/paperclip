@@ -1732,6 +1732,16 @@ export {
   type InboxAgentPolicy,
 } from "./types/inbox-agent-policy.js";
 export {
+  approvalDecisionPolicyModeSchema,
+  updateApprovalDecisionPolicySchema,
+  type UpdateApprovalDecisionPolicy,
+} from "./validators/approval-decision-policy.js";
+export {
+  APPROVAL_DECISION_POLICIES,
+  type ApprovalDecisionPolicyMode,
+  type ApprovalDecisionPolicy,
+} from "./types/approval-decision-policy.js";
+export {
   RESOURCE_MEMBERSHIP_STATES,
   type ResourceMembershipResourceType,
   type ResourceMembershipState,

@@ -1,6 +1,9 @@
 import { Router, type Request } from "express";
 import { eq } from "drizzle-orm";
-import { heartbeatRuns, type Db } from "@paperclipai/db";
+import { authUsers, heartbeatRuns, type Db } from "@paperclipai/db";
+import { assertHumanManagerEligible, resolveActiveAgentManagerUserId } from "../services/agent-manager.js";
+import { approvalDecisionPolicyService } from "../services/approval-decision-policy.js";
+import { forbidden, unprocessable } from "../errors.js";
 import {
   addApprovalCommentSchema,
   createApprovalSchema,
@@ -47,6 +50,7 @@ export function approvalRoutes(
   const router = Router();
   const svc = approvalService(db);
   const access = accessService(db);
+  const decisionPolicies = approvalDecisionPolicyService(db);
   const heartbeat = heartbeatService(db, {
     pluginWorkerManager: options.pluginWorkerManager,
   });
@@ -202,6 +206,70 @@ export function approvalRoutes(
     return false;
   }
 
+  /**
+   * Who an approval is addressed to. Omitted: an agent's request goes to its
+   * human manager (null when it has none). Explicit: a Board actor may address
+   * any eligible member; an agent may only name its own manager, so it cannot
+   * route around that person.
+   */
+  async function resolveApprovalAddressee(
+    req: Request,
+    companyId: string,
+    requestedByAgentId: string | null,
+    requested: string | null | undefined,
+  ): Promise<string | null> {
+    if (requested === undefined) {
+      return req.actor.type === "agent" && requestedByAgentId
+        ? resolveActiveAgentManagerUserId(db, companyId, requestedByAgentId)
+        : null;
+    }
+    if (requested === null) return null;
+    if (req.actor.type === "agent") {
+      const manager = requestedByAgentId
+        ? await resolveActiveAgentManagerUserId(db, companyId, requestedByAgentId)
+        : null;
+      if (manager !== requested) {
+        throw unprocessable("Agents may only address approvals to their own manager", {
+          code: "approval_addressee_not_allowed",
+          addresseeUserId: requested,
+        });
+      }
+      return requested;
+    }
+    await assertHumanManagerEligible(db, companyId, requested);
+    return requested;
+  }
+
+  /**
+   * The addressee's decision policy gates approve / reject / request-revision.
+   * `addressee_only` binds every other Board user, instance admins included:
+   * it is the addressee's consent boundary. The error names the addressee so
+   * the caller knows who to ask.
+   */
+  async function assertApprovalDecisionAllowed(req: Request, approvalId: string) {
+    const approval = await svc.getById(approvalId);
+    if (!approval?.addresseeUserId) return;
+    const actorUserId = req.actor.userId ?? null;
+    if (actorUserId === approval.addresseeUserId) return;
+    const policy = await decisionPolicies.get(approval.companyId, approval.addresseeUserId);
+    if (policy.policy !== "addressee_only") return;
+    const addressee = await db
+      .select({ name: authUsers.name, email: authUsers.email })
+      .from(authUsers)
+      .where(eq(authUsers.id, approval.addresseeUserId))
+      .then((rows) => rows[0] ?? null);
+    const addresseeName =
+      addressee?.name?.trim() || addressee?.email?.trim() || (approval.addresseeUserId === "local-board" ? "the Board owner" : approval.addresseeUserId.slice(0, 8));
+    throw forbidden(
+      `Only ${addresseeName} can decide this approval. Ask them to decide it, or to allow any Board member in their profile settings.`,
+      {
+        code: "approval_addressee_only",
+        addresseeUserId: approval.addresseeUserId,
+        addresseeName,
+      },
+    );
+  }
+
   router.get("/companies/:companyId/approvals", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
@@ -240,12 +308,15 @@ export function approvalRoutes(
         : approvalInput.payload;
 
     const actor = getActorInfo(req);
+    const requestedByAgentId =
+      approvalInput.requestedByAgentId ?? (actor.actorType === "agent" ? actor.actorId : null);
+    const addresseeUserId = await resolveApprovalAddressee(req, companyId, requestedByAgentId, approvalInput.addresseeUserId);
     const approval = await svc.create(companyId, {
       ...approvalInput,
       payload: normalizedPayload,
       requestedByUserId: actor.actorType === "user" ? actor.actorId : null,
-      requestedByAgentId:
-        approvalInput.requestedByAgentId ?? (actor.actorType === "agent" ? actor.actorId : null),
+      requestedByAgentId,
+      addresseeUserId,
       status: "pending",
       decisionNote: null,
       decidedByUserId: null,
@@ -268,7 +339,7 @@ export function approvalRoutes(
       action: "approval.created",
       entityType: "approval",
       entityId: approval.id,
-      details: { type: approval.type, issueIds: uniqueIssueIds },
+      details: { type: approval.type, issueIds: uniqueIssueIds, addresseeUserId },
     });
 
     res.status(201).json(redactApprovalPayload(approval));
@@ -290,6 +361,7 @@ export function approvalRoutes(
       res.status(404).json({ error: "Approval not found" });
       return;
     }
+    await assertApprovalDecisionAllowed(req, id);
     const decidedByUserId = req.actor.userId ?? "board";
     const { approval, applied } = await svc.approve(id, decidedByUserId, req.body.decisionNote);
 
@@ -406,6 +478,7 @@ export function approvalRoutes(
       res.status(404).json({ error: "Approval not found" });
       return;
     }
+    await assertApprovalDecisionAllowed(req, id);
     const decidedByUserId = req.actor.userId ?? "board";
     const { approval, applied } = await svc.reject(id, decidedByUserId, req.body.decisionNote);
 
@@ -444,6 +517,7 @@ export function approvalRoutes(
         res.status(404).json({ error: "Approval not found" });
         return;
       }
+      await assertApprovalDecisionAllowed(req, id);
       const decidedByUserId = req.actor.userId ?? "board";
       const approval = await svc.requestRevision(id, decidedByUserId, req.body.decisionNote);
 

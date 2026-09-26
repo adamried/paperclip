@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lte, ne, not, or, sql } from "drizzle-orm";
+import { resolveActiveAgentManagerUserId } from "./agent-manager.js";
 import type { Db } from "@paperclipai/db";
 import {
   agents,
@@ -165,7 +166,13 @@ async function resolveCompanyDefaultResponsibleUserId(db: Db, companyId: string)
   return owner?.userId ?? null;
 }
 
-async function resolveRoutineResponsibleUserId(db: Db, companyId: string, actorUserId: string | null | undefined, parentIssueId?: string | null) {
+async function resolveRoutineResponsibleUserId(
+  db: Db,
+  companyId: string,
+  actorUserId: string | null | undefined,
+  parentIssueId?: string | null,
+  assigneeAgentId?: string | null,
+) {
   if (actorUserId) return actorUserId;
   if (parentIssueId) {
     const parent = await db
@@ -175,6 +182,12 @@ async function resolveRoutineResponsibleUserId(db: Db, companyId: string, actorU
       .then((rows) => rows[0] ?? null);
     if (parent?.responsibleUserId) return parent.responsibleUserId;
     if (parent?.createdByUserId) return parent.createdByUserId;
+  }
+  // A routine owned by an agent that reports to a person runs on that
+  // person's behalf before falling back to the company default.
+  if (assigneeAgentId) {
+    const managerUserId = await resolveActiveAgentManagerUserId(db, companyId, assigneeAgentId);
+    if (managerUserId) return managerUserId;
   }
   return resolveCompanyDefaultResponsibleUserId(db, companyId);
 }
@@ -2189,7 +2202,13 @@ export function routineService(
       );
       assertRoutineVariableDefinitions(variables);
       const status = normalizeDraftRoutineStatus(input.status, input.assigneeAgentId);
-      const responsibleUserId = await resolveRoutineResponsibleUserId(db, companyId, actor.userId, input.parentIssueId ?? null);
+      const responsibleUserId = await resolveRoutineResponsibleUserId(
+        db,
+        companyId,
+        actor.userId,
+        input.parentIssueId ?? null,
+        input.assigneeAgentId ?? null,
+      );
       if (!responsibleUserId) {
         throw unprocessable("Routine requires a responsible user");
       }
@@ -2292,6 +2311,7 @@ export function routineService(
         existing.companyId,
         actor.userId,
         patch.parentIssueId === undefined ? existing.parentIssueId : patch.parentIssueId,
+        patch.assigneeAgentId === undefined ? existing.assigneeAgentId : patch.assigneeAgentId,
       );
       if (!responsibleUserId) {
         throw unprocessable("Routine requires a responsible user");

@@ -155,6 +155,7 @@ import {
   workspaceOperations,
 } from "@paperclipai/db";
 import { conflict, HttpError, notFound } from "../errors.js";
+import { resolveActiveAgentManagerUserId } from "./agent-manager.js";
 import {
   getStartupTraceContext,
   getStartupTracer,
@@ -9542,6 +9543,7 @@ export function heartbeatService(
       // in-transaction issue status rather than a stale one.
       return resolveResponsibleUserIdForRunSeed({
         companyId: input.companyId,
+        agentId: input.agentId,
         contextSnapshot: input.contextSnapshot,
         issueContext: input.issue,
         // The wake-queue module's port type widens `env` to `unknown` so its
@@ -10777,6 +10779,8 @@ export function heartbeatService(
 
   async function resolveResponsibleUserIdForRunSeed(input: {
     companyId: string;
+    /** The agent the run is for; its human manager is the fallback before the company default. */
+    agentId?: string | null;
     contextSnapshot: Record<string, unknown>;
     issueContext: { id: string; responsibleUserId: string | null; parentId: string | null } | null;
     routineEnvContext: Awaited<
@@ -10857,6 +10861,16 @@ export function heartbeatService(
     );
     if (parentResponsibleUserId) return parentResponsibleUserId;
     if (!input.issueContext && requestedUserId) return requestedUserId;
+    // An agent that reports to a person runs on that person's behalf when no
+    // work item says otherwise. The cause is distinct from "company_default",
+    // which several consumers treat as "no real identity".
+    if (input.agentId) {
+      const managerUserId = await resolveActiveAgentManagerUserId(db, input.companyId, input.agentId);
+      if (managerUserId) {
+        input.contextSnapshot.executionIdentityCause = "agent_manager";
+        return managerUserId;
+      }
+    }
     input.contextSnapshot.executionIdentityCause = "company_default";
     return resolveCompanyDefaultResponsibleUserId(input.companyId);
   }
@@ -10872,6 +10886,7 @@ export function heartbeatService(
     const operatorIdentity = await explicitOperatorRunIdentity(db, input.run);
     const responsibleUserId = operatorIdentity?.actorId ?? await resolveResponsibleUserIdForRunSeed({
       companyId: input.run.companyId,
+      agentId: input.run.agentId,
       contextSnapshot: input.contextSnapshot,
       issueContext: input.issueContext,
       routineEnvContext: input.routineEnvContext,
@@ -26087,6 +26102,7 @@ export function heartbeatService(
         const queuedResponsibleUserId =
           await resolveResponsibleUserIdForRunSeed({
             companyId: agent.companyId,
+            agentId: agent.id,
             contextSnapshot: enrichedContextSnapshot,
             issueContext: queuedIssueContext,
             routineEnvContext: queuedRoutineEnvContext,

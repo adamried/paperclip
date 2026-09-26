@@ -5,6 +5,9 @@ import { multilineTextSchema } from "./text.js";
 export const createApprovalSchema = z.object({
   type: z.enum(APPROVAL_TYPES),
   requestedByAgentId: z.string().guid().optional().nullable(),
+  // Omitted: an agent's request is addressed to its human manager, if any.
+  // Explicit null: addressed to the Board at large.
+  addresseeUserId: z.string().trim().min(1).optional().nullable(),
   payload: z.record(z.string(), z.unknown()),
   issueIds: z.array(z.string().guid()).optional(),
 });

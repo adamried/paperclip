@@ -56,6 +56,19 @@ export function buildCompanyUserProfileMap(
   return profiles;
 }
 
+/** The person an approval is addressed to, for display, or null when open to the Board. */
+export function approvalAddressee(
+  addresseeUserId: string | null | undefined,
+  profiles: ReadonlyMap<string, CompanyUserProfile>,
+): { name: string; image: string | null } | null {
+  if (!addresseeUserId) return null;
+  const profile = profiles.get(addresseeUserId);
+  return {
+    name: profile?.label ?? fallbackUserLabel(addresseeUserId),
+    image: profile?.image ?? null,
+  };
+}
+
 export function buildCompanyUserInlineOptions(
   members: CompanyUserRecord[] | null | undefined,
   options?: { excludeUserIds?: Iterable<string | null | undefined> },
