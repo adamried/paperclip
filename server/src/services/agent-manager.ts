@@ -90,6 +90,24 @@ export async function resolveActiveAgentManagerUserId(
 }
 
 /**
+ * Whether a stored responsible user (routine configuration, for instance)
+ * may still lend their identity: yes while they are an active non-viewer
+ * member, and also when they have no membership row at all (local mode's
+ * board user, legacy data). A suspended, archived, or viewer member yields
+ * null so the caller resolves a fresh identity, with its cause, instead of
+ * persisting a fallback as if it were real.
+ */
+export async function reconcileStoredResponsibleUserId(
+  db: Db,
+  companyId: string,
+  storedUserId: string | null | undefined,
+): Promise<string | null> {
+  if (!storedUserId) return null;
+  const membership = await findHumanManagerMembership(db, companyId, storedUserId);
+  return !membership || humanManagerMembershipIsActive(membership) ? storedUserId : null;
+}
+
+/**
  * An agent may point an agent (itself, one it hires, one it edits, or one it
  * restores from a revision) at the Board, at an agent, or at the acting
  * agent's own human manager, never at some other person: a human manager

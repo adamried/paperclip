@@ -10675,11 +10675,12 @@ export function heartbeatService(
         return {
           routineId: issueContext.originId,
           env: snapshot.routine.env ?? null,
-          responsibleUserId:
-            routineRun?.responsibleUserId ??
-            revision?.responsibleUserId ??
-            snapshot.routine.responsibleUserId ??
-            null,
+          // A run row is authoritative even when null: dispatch clears a
+          // stored user who is no longer an eligible member, and the stale
+          // revision value must not resurrect them.
+          responsibleUserId: routineRun
+            ? routineRun.responsibleUserId ?? null
+            : revision?.responsibleUserId ?? snapshot.routine.responsibleUserId ?? null,
         };
       }
     }
@@ -10700,8 +10701,9 @@ export function heartbeatService(
     return {
       routineId: issueContext.originId,
       env: routine?.env ?? null,
-      responsibleUserId:
-        routineRun?.responsibleUserId ?? routine?.responsibleUserId ?? null,
+      responsibleUserId: routineRun
+        ? routineRun.responsibleUserId ?? null
+        : routine?.responsibleUserId ?? null,
     };
   }
 

@@ -1,10 +1,6 @@
 import crypto from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lte, ne, not, or, sql } from "drizzle-orm";
-import {
-  findHumanManagerMembership,
-  humanManagerMembershipIsActive,
-  resolveActiveAgentManagerUserId,
-} from "./agent-manager.js";
+import { reconcileStoredResponsibleUserId, resolveActiveAgentManagerUserId } from "./agent-manager.js";
 import type { Db } from "@paperclipai/db";
 import {
   agents,
@@ -194,31 +190,6 @@ async function resolveRoutineResponsibleUserId(
     if (managerUserId) return managerUserId;
   }
   return resolveCompanyDefaultResponsibleUserId(db, companyId);
-}
-
-/**
- * The person a routine run acts for. The stored responsible user is routine
- * configuration and normally wins, but a person who has since been suspended,
- * archived, or downgraded to viewer no longer lends their identity to runs:
- * the run falls back to the assignee's active manager, then the company
- * default, the same way a heartbeat run would. A stored id with no membership
- * row at all (local mode's board user, legacy data) is kept as is.
- */
-async function resolveRoutineRunResponsibleUserId(
-  db: Db,
-  companyId: string,
-  assigneeAgentId: string | null | undefined,
-  storedUserId: string | null,
-) {
-  if (storedUserId) {
-    const membership = await findHumanManagerMembership(db, companyId, storedUserId);
-    if (!membership || humanManagerMembershipIsActive(membership)) return storedUserId;
-  }
-  if (assigneeAgentId) {
-    const managerUserId = await resolveActiveAgentManagerUserId(db, companyId, assigneeAgentId);
-    if (managerUserId) return managerUserId;
-  }
-  return (await resolveCompanyDefaultResponsibleUserId(db, companyId)) ?? storedUserId;
 }
 
 type Actor = { agentId?: string | null; userId?: string | null; runId?: string | null };
@@ -1865,12 +1836,15 @@ export function routineService(
               return row?.responsibleUserId ?? snapshot?.routine.responsibleUserId ?? null;
             })
         : null;
+      // The stored responsible user is routine configuration, but a person
+      // who has since left or become a viewer is dropped here so the
+      // heartbeat resolves the run's identity (with its cause) at seed time,
+      // like a routine that never stored one.
       const responsibleUserId =
         manualRunnerUserId
-        ?? (await resolveRoutineRunResponsibleUserId(
+        ?? (await reconcileStoredResponsibleUserId(
           txDb,
           input.routine.companyId,
-          input.routine.assigneeAgentId,
           latestRevisionResponsibleUserId ?? input.routine.responsibleUserId ?? null,
         ));
       const [createdRun] = await txDb

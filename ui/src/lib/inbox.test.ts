@@ -347,6 +347,22 @@ describe("inbox helpers", () => {
     });
   });
 
+  it("counts an addressed approval for others only once the addressee is no longer eligible", () => {
+    const base = {
+      approvals: [{ ...makeApproval("pending"), addresseeUserId: "user-1" }],
+      joinRequests: [],
+      dashboard: undefined,
+      heartbeatRuns: [],
+      mineIssues: [],
+      dismissedAlerts: new Set<string>(),
+      dismissedAtByKey: new Map<string, number>(),
+      currentUserId: "user-2",
+    };
+    expect(computeInboxBadgeData({ ...base, eligibleAddresseeIds: new Set(["user-1", "user-2"]) }).approvals).toBe(0);
+    expect(computeInboxBadgeData({ ...base, eligibleAddresseeIds: new Set(["user-2"]) }).approvals).toBe(1);
+    expect(computeInboxBadgeData({ ...base, eligibleAddresseeIds: null }).approvals).toBe(0);
+  });
+
   it("drops dismissed runs and alerts from the computed badge", () => {
     const result = computeInboxBadgeData({
       approvals: [],

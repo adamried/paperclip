@@ -1029,9 +1029,11 @@ chief-of-staff onboarding persona.
   "agent_manager"`, distinct from `"company_default"`, which several consumers
   treat as "no real identity". A routine stores its responsible user as
   configuration; at dispatch, a stored person whose membership is suspended,
-  archived, or viewer no longer lends their identity, and the run falls back
-  to the assignee's active manager, then the company default. Startup
-  reconciliation of built-in agents never replaces a human manager.
+  archived, or viewer is dropped from the routine run, which then resolves
+  its identity at heartbeat seed time (assignee's active manager, then the
+  company default) with the matching cause, like a routine that never stored
+  one. Startup reconciliation of built-in agents never replaces a human
+  manager.
 - **Approvals.** `approvals.addressee_user_id` names the person an approval is
   addressed to. An agent's request (hire requests and high-risk tool actions
   included) is always addressed to the acting agent's own active manager: the

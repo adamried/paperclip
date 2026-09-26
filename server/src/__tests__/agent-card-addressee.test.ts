@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { assertAgentMayAssignManager, defaultAgentCardAddressee } from "../services/agent-manager.js";
+import {
+  assertAgentMayAssignManager,
+  defaultAgentCardAddressee,
+  reconcileStoredResponsibleUserId,
+} from "../services/agent-manager.js";
 
 /**
  * A minimal drizzle-shaped fake: each `select` call answers with the next
@@ -61,6 +65,23 @@ describe("defaultAgentCardAddressee", () => {
       [{ status: "suspended", membershipRole: "owner" }],
     ]);
     expect(await defaultAgentCardAddressee(suspendedManager, "company-1", "agent-1", "run-1")).toBeNull();
+  });
+});
+
+describe("reconcileStoredResponsibleUserId", () => {
+  it("keeps an active member and a user with no membership row", async () => {
+    expect(await reconcileStoredResponsibleUserId(fakeDb([[active]]), "company-1", "user-1")).toBe("user-1");
+    expect(await reconcileStoredResponsibleUserId(fakeDb([[]]), "company-1", "local-board")).toBe("local-board");
+  });
+
+  it("drops a suspended, archived, or viewer member and never resolves a replacement", async () => {
+    const suspended = fakeDb([[{ status: "suspended", membershipRole: "owner" }]]);
+    expect(await reconcileStoredResponsibleUserId(suspended, "company-1", "user-1")).toBeNull();
+    expect((suspended as { select: ReturnType<typeof vi.fn> }).select).toHaveBeenCalledTimes(1);
+
+    const viewer = fakeDb([[{ status: "active", membershipRole: "viewer" }]]);
+    expect(await reconcileStoredResponsibleUserId(viewer, "company-1", "user-1")).toBeNull();
+    expect(await reconcileStoredResponsibleUserId(fakeDb([]), "company-1", null)).toBeNull();
   });
 });
 
