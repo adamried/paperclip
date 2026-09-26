@@ -21,6 +21,49 @@ vi.mock("../components/MarkdownBody", () => ({
 }));
 
 describe("AgentOverview", () => {
+  it("names the person an agent reports to, and the Board otherwise", () => {
+    const base = {
+      id: "agent-1",
+      companyId: "company-1",
+      name: "Chief of Staff",
+      urlKey: "chief",
+      role: "chief_of_staff",
+      title: null,
+      status: "active",
+      reportsTo: null,
+      capabilities: null,
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      chainOfCommand: [],
+      access: { canAssignTasks: true, taskAssignSource: "explicit_grant", agentChangeAuthority: "none", agentChangeAuthoritySource: "none", membership: null, grants: [] },
+    };
+    const render = (agent: unknown) => renderToStaticMarkup(
+      <QueryClientProvider client={new QueryClient()}>
+        <AgentOverview
+          agent={agent as AgentDetail}
+          runs={[] as HeartbeatRun[]}
+          assignedIssues={[]}
+          directReportCount={0}
+          skillNames={[]}
+          agentRouteId="chief"
+        />
+      </QueryClientProvider>,
+    );
+
+    const managed = render({
+      ...base,
+      reportsToUserId: "user-1",
+      chainOfCommandRoot: { kind: "user", id: "user-1", name: "Dana Operator", email: null, image: null, active: false },
+    });
+    expect(managed).toContain("Dana Operator");
+    expect(managed).toContain("(inactive member)");
+
+    const boardRun = render({ ...base, reportsToUserId: null, chainOfCommandRoot: { kind: "board" } });
+    expect(boardRun).toContain("The Board");
+    expect(boardRun).not.toContain("Dana Operator");
+  });
+
   it("prioritizes identity, capability, runtime, skills, tasks, and scoped Audit entry points", () => {
     const agent = {
       id: "agent-1",
@@ -36,7 +79,7 @@ describe("AgentOverview", () => {
       adapterConfig: { model: "gpt-5.6-sol" },
       runtimeConfig: {},
       chainOfCommand: [],
-      access: { canAssignTasks: true, taskAssignSource: "explicit_grant", membership: null, grants: [] },
+      access: { canAssignTasks: true, taskAssignSource: "explicit_grant", agentChangeAuthority: "none", agentChangeAuthoritySource: "none", membership: null, grants: [] },
     } as unknown as AgentDetail;
     const issue = {
       id: "issue-1",

@@ -29,6 +29,7 @@ import {
   getRecentTouchedIssues,
   getUnreadTouchedIssues,
   groupInboxWorkItems,
+  isApprovalVisibleInMine,
   isInboxEntityDismissed,
   isMineInboxTab,
   loadInboxFilterPreferences,
@@ -81,6 +82,7 @@ function makeApproval(status: Approval["status"]): Approval {
     type: "hire_agent",
     requestedByAgentId: null,
     requestedByUserId: null,
+    addresseeUserId: null,
     status,
     payload: {},
     decisionNote: null,
@@ -343,6 +345,22 @@ describe("inbox helpers", () => {
       mineIssues: 1,
       alerts: 1,
     });
+  });
+
+  it("counts an addressed approval for others only once the addressee is no longer eligible", () => {
+    const base = {
+      approvals: [{ ...makeApproval("pending"), addresseeUserId: "user-1" }],
+      joinRequests: [],
+      dashboard: undefined,
+      heartbeatRuns: [],
+      mineIssues: [],
+      dismissedAlerts: new Set<string>(),
+      dismissedAtByKey: new Map<string, number>(),
+      currentUserId: "user-2",
+    };
+    expect(computeInboxBadgeData({ ...base, eligibleAddresseeIds: new Set(["user-1", "user-2"]) }).approvals).toBe(0);
+    expect(computeInboxBadgeData({ ...base, eligibleAddresseeIds: new Set(["user-2"]) }).approvals).toBe(1);
+    expect(computeInboxBadgeData({ ...base, eligibleAddresseeIds: null }).approvals).toBe(0);
   });
 
   it("drops dismissed runs and alerts from the computed badge", () => {
@@ -1587,5 +1605,35 @@ describe("inbox helpers", () => {
     expect(shouldResetInboxWorkspaceGrouping("workspace", false, true)).toBe(true);
     expect(shouldResetInboxWorkspaceGrouping("workspace", true, true)).toBe(false);
     expect(shouldResetInboxWorkspaceGrouping("none", false, true)).toBe(false);
+  });
+});
+
+describe("isApprovalVisibleInMine with an addressee", () => {
+  it("shows an addressed approval only to its addressee while it is actionable", () => {
+    const addressed = { ...makeApproval("pending"), addresseeUserId: "user-1" };
+    expect(isApprovalVisibleInMine(addressed, "user-1")).toBe(true);
+    expect(isApprovalVisibleInMine(addressed, "user-2")).toBe(false);
+    expect(isApprovalVisibleInMine(addressed, null)).toBe(false);
+  });
+
+  it("opens an addressed approval back up once the addressee is no longer eligible", () => {
+    const addressed = { ...makeApproval("pending"), addresseeUserId: "user-1" };
+    const eligible = new Set(["user-1", "user-2"]);
+    expect(isApprovalVisibleInMine(addressed, "user-2", eligible)).toBe(false);
+    // user-1 suspended or downgraded to viewer: the directory no longer lists them.
+    expect(isApprovalVisibleInMine(addressed, "user-2", new Set(["user-2"]))).toBe(true);
+    // Directory not loaded yet: assume the addressee is still eligible.
+    expect(isApprovalVisibleInMine(addressed, "user-2", null)).toBe(false);
+  });
+
+  it("keeps unaddressed actionable approvals visible to everyone", () => {
+    expect(isApprovalVisibleInMine(makeApproval("pending"), "user-2")).toBe(true);
+    expect(isApprovalVisibleInMine(makeApproval("pending"), null)).toBe(true);
+  });
+
+  it("falls back to requester or decider once the approval is settled", () => {
+    const settled = { ...makeApproval("approved"), addresseeUserId: "user-1", decidedByUserId: "user-2" };
+    expect(isApprovalVisibleInMine(settled, "user-2")).toBe(true);
+    expect(isApprovalVisibleInMine(settled, "user-1")).toBe(false);
   });
 });

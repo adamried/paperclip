@@ -11,7 +11,8 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { AgentIcon } from "../components/AgentIconPicker";
-import { Download, Maximize2, Minus, Network, Plus, Upload } from "lucide-react";
+import { Download, Landmark, Maximize2, Minus, Network, Plus, Upload } from "lucide-react";
+import { Identity } from "../components/Identity";
 import { AGENT_ROLE_LABELS, type Agent } from "@paperclipai/shared";
 import { useCloudInstance } from "@/hooks/useCloudInstance";
 import { useHiddenSettings } from "@/hooks/useHiddenSettings";
@@ -31,9 +32,11 @@ const TOUCH_MOVE_THRESHOLD = 6;
 
 interface LayoutNode {
   id: string;
+  kind: OrgNode["kind"];
   name: string;
   role: string;
   status: string;
+  image: string | null;
   x: number;
   y: number;
   children: LayoutNode[];
@@ -83,9 +86,11 @@ function layoutTree(node: OrgNode, x: number, y: number): LayoutNode {
 
   return {
     id: node.id,
+    kind: node.kind,
     name: node.name,
     role: node.role,
     status: node.status,
+    image: node.image ?? null,
     x: x + (totalW - CARD_W) / 2,
     y,
     children: layoutChildren,
@@ -606,11 +611,56 @@ export function OrgChart({ orgTree: providedOrgTree, agents: providedAgents, emb
           {allNodes.map((node) => {
             const agent = agentMap.get(node.id);
             const dotColor = statusDotColor[node.status] ?? defaultDotColor;
+            const isBoard = node.kind === "board";
+            const isPerson = node.kind === "user";
+            const container = isBoard || isPerson;
+
+            // The Board and people are containers: they show who the agents
+            // answer to and are not pages of their own.
+            if (container) {
+              return (
+                <Card
+                  key={node.id}
+                  data-org-card
+                  data-org-node-kind={node.kind}
+                  className="block absolute py-0 bg-muted/40 select-none cursor-default"
+                  style={{
+                    left: node.x,
+                    top: node.y,
+                    width: CARD_W,
+                    minHeight: CARD_H,
+                  }}
+                >
+                  <div className="flex items-center px-4 py-3 gap-3">
+                    <div className="relative shrink-0">
+                      {isPerson ? (
+                        <Identity name={node.name} avatarUrl={node.image} size="lg" />
+                      ) : (
+                        <div className="w-9 h-9 rounded-full bg-muted flex items-center justify-center">
+                          <Landmark className="h-4.5 w-4.5 text-foreground/70" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex flex-col items-start min-w-0 flex-1">
+                      {!isPerson && (
+                        <span className="text-sm font-semibold text-foreground leading-tight">
+                          {node.name}
+                        </span>
+                      )}
+                      <span className="text-(length:--text-micro) text-muted-foreground leading-tight mt-0.5">
+                        {isBoard ? "Owns the company" : node.status === "inactive" ? "Manager (inactive member)" : "Manager"}
+                      </span>
+                    </div>
+                  </div>
+                </Card>
+              );
+            }
 
             return (
               <Card
                 key={node.id}
                 data-org-card
+                data-org-node-kind="agent"
                 className="block absolute py-0 hover:shadow-md hover:border-foreground/20 transition-(--tp-box-shadow-border-color) duration-150 cursor-pointer select-none"
                 style={{
                   left: node.x,

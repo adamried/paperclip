@@ -113,4 +113,13 @@ describe("agent permissions service", () => {
       canAssignTasks: false,
     }).canCreateSkills).toBe(false);
   });
+
+  it("accepts an optional agent change authority level", () => {
+    const base = { canCreateAgents: false, canAssignTasks: false };
+    expect(updateAgentPermissionsSchema.parse(base).agentChangeAuthority).toBeUndefined();
+    for (const level of ["none", "suggest", "direct"] as const) {
+      expect(updateAgentPermissionsSchema.parse({ ...base, agentChangeAuthority: level }).agentChangeAuthority).toBe(level);
+    }
+    expect(() => updateAgentPermissionsSchema.parse({ ...base, agentChangeAuthority: "admin" })).toThrow();
+  });
 });

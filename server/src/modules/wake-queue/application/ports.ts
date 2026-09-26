@@ -36,6 +36,8 @@ export interface WakeQueueHost {
    */
   resolveResponsibleUserId(input: {
     companyId: string;
+    /** The agent the run is for, so its human manager can be the fallback identity. */
+    agentId: string | null;
     contextSnapshot: Record<string, unknown>;
     issue: IssueSnapshot;
     /** From a prior `getRoutineEnv` call against the same issue; pass `{ routineId: null, env: null, responsibleUserId: null }` when the issue is not a routine execution. */

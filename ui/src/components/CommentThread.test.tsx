@@ -313,6 +313,7 @@ describe("CommentThread", () => {
       type: "request_board_approval",
       requestedByAgentId: "agent-1",
       requestedByUserId: null,
+      addresseeUserId: null,
       status: "pending",
       payload: {
         title: "Approve hosting spend",

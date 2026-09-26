@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useLocation } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { approvalsApi } from "../api/approvals";
 import { agentsApi } from "../api/agents";
+import { accessApi } from "../api/access";
+import { approvalAddressee, buildCompanyUserProfileMap } from "../lib/company-members";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { queryKeys } from "../lib/queryKeys";
@@ -41,6 +43,16 @@ export function Approvals() {
     queryFn: () => agentsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId,
   });
+
+  const { data: userDirectory } = useQuery({
+    queryKey: queryKeys.access.companyUserDirectory(selectedCompanyId!),
+    queryFn: () => accessApi.listUserDirectory(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+  const userProfiles = useMemo(
+    () => buildCompanyUserProfileMap(userDirectory?.users),
+    [userDirectory],
+  );
 
   const approveMutation = useMutation({
     mutationFn: (id: string) => approvalsApi.approve(id),
@@ -120,6 +132,7 @@ export function Approvals() {
               key={approval.id}
               approval={approval}
               requesterAgent={approval.requestedByAgentId ? (agents ?? []).find((a) => a.id === approval.requestedByAgentId) ?? null : null}
+              addressee={approvalAddressee(approval.addresseeUserId, userProfiles)}
               onApprove={() => approveMutation.mutate(approval.id)}
               onReject={() => rejectMutation.mutate(approval.id)}
               detailLink={`/approvals/${approval.id}`}

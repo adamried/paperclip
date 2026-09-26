@@ -66,6 +66,13 @@ import { trackAgentCreated } from "@paperclipai/shared/telemetry";
 import { validate } from "../middleware/validate.js";
 import { agentInstructionsBundleMode } from "../services/agent-instructions.js";
 import {
+  agentChangeAuthorityFloor,
+  agentChangeAuthorityFromKeys,
+  compareAgentChangeAuthority,
+  deriveAgentChangeAuthority,
+  grantWritesForAgentChangeAuthority,
+} from "../services/agent-change-authority.js";
+import {
   agentService,
   agentInstructionsService,
   accessService,
@@ -149,7 +156,15 @@ import {
   NativeRuntimeRequestResolutionError,
   resolveNativeRuntimeRequest,
 } from "../services/native-runtime/native-session-executor.js";
-import { renderOrgChartSvg, renderOrgChartPng, type OrgNode, type OrgChartStyle, ORG_CHART_STYLES } from "./org-chart-svg.js";
+import { renderOrgChartSvg, renderOrgChartPng, type OrgChartStyle, ORG_CHART_STYLES } from "./org-chart-svg.js";
+import {
+  buildOrgChartTree,
+  orgChartManagerUserIds,
+  type OrgChartAgentNode,
+} from "../services/org-chart-tree.js";
+import { assertAgentMayAssignManager, loadOrgChartUserSummaries, resolveActiveAgentManagerUserId } from "../services/agent-manager.js";
+import { assertApprovalDecisionAllowed } from "../services/approval-decision-policy.js";
+import type { OrgTreeNode } from "@paperclipai/shared";
 import {
   instanceSettingsService,
   isTruthyRuntimeEnvValue,
@@ -241,6 +256,7 @@ import {
   AGENT_PROFILE_CHANGE_CONSENT_FIELDS,
   agentInstructionsChangeTargetKey,
   agentProfileChangeTargetKey,
+  agentManagerChangeTargetKey,
   changeConsentGateService,
   touchesAgentProfileChangeConsentFields,
 } from "../services/change-consent-gate.js";
@@ -1566,11 +1582,13 @@ export function agentRoutes(
       ? await access.listPrincipalGrants(agent.companyId, "agent", agent.id)
       : [];
     const hasExplicitTaskAssignGrant = grants.some((grant) => grant.permissionKey === "tasks:assign");
+    const changeAuthority = deriveAgentChangeAuthority(agent, grants);
 
     if (agent.role === "ceo") {
       return {
         canAssignTasks: true,
         taskAssignSource: "ceo_role" as const,
+        ...changeAuthority,
         membership,
         grants,
       };
@@ -1580,6 +1598,7 @@ export function agentRoutes(
       return {
         canAssignTasks: true,
         taskAssignSource: "agent_creator" as const,
+        ...changeAuthority,
         membership,
         grants,
       };
@@ -1589,6 +1608,7 @@ export function agentRoutes(
       return {
         canAssignTasks: true,
         taskAssignSource: "explicit_grant" as const,
+        ...changeAuthority,
         membership,
         grants,
       };
@@ -1598,6 +1618,7 @@ export function agentRoutes(
       return {
         canAssignTasks: true,
         taskAssignSource: "simple_default" as const,
+        ...changeAuthority,
         membership,
         grants,
       };
@@ -1606,6 +1627,7 @@ export function agentRoutes(
     return {
       canAssignTasks: false,
       taskAssignSource: "none" as const,
+      ...changeAuthority,
       membership,
       grants,
     };
@@ -1615,8 +1637,9 @@ export function agentRoutes(
     agent: NonNullable<Awaited<ReturnType<typeof svc.getById>>>,
     options?: { restricted?: boolean },
   ) {
-    const [chainOfCommand, accessState] = await Promise.all([
+    const [chainOfCommand, chainOfCommandRoot, accessState] = await Promise.all([
       svc.getChainOfCommand(agent.id),
+      svc.getChainOfCommandRoot(agent.id),
       buildAgentAccessState(agent),
     ]);
 
@@ -1627,6 +1650,7 @@ export function agentRoutes(
     return {
       ...baseAgent,
       chainOfCommand,
+      chainOfCommandRoot,
       access: accessState,
     };
   }
@@ -1708,6 +1732,16 @@ export function agentRoutes(
       true,
       grantedByUserId,
     );
+  }
+
+  /** Agent actors may only assign their own manager (or none); see assertAgentMayAssignManager. */
+  async function assertAgentActorManagerAssignment(
+    req: Request,
+    companyId: string,
+    reportsToUserId: string | null | undefined,
+  ) {
+    if (req.actor.type !== "agent") return;
+    await assertAgentMayAssignManager(db, companyId, req.actor.agentId ?? null, reportsToUserId);
   }
 
   async function assertCanCreateAgentsForCompany(req: Request, companyId: string) {
@@ -3117,6 +3151,7 @@ export function agentRoutes(
       title: agent.title,
       status: agent.status,
       reportsTo: agent.reportsTo,
+      reportsToUserId: agent.reportsToUserId ?? null,
       adapterType: agent.adapterType,
       adapterConfig: redactAgentAdapterConfig(agent.adapterConfig),
       runtimeConfig: redactEventPayload(agent.runtimeConfig),
@@ -3179,7 +3214,7 @@ export function agentRoutes(
     };
   }
 
-  function toLeanOrgNode(node: Record<string, unknown>): Record<string, unknown> {
+  function toLeanOrgNode(node: Record<string, unknown>): OrgChartAgentNode {
     const reports = Array.isArray(node.reports)
       ? (node.reports as Array<Record<string, unknown>>).map((report) => toLeanOrgNode(report))
       : [];
@@ -3188,8 +3223,20 @@ export function agentRoutes(
       name: String(node.name),
       role: String(node.role),
       status: String(node.status),
+      reportsToUserId: typeof node.reportsToUserId === "string" ? node.reportsToUserId : null,
       reports,
     };
+  }
+
+  /**
+   * The actor-visible agent forest wrapped under the Board root, with the
+   * people who manage root agents as intermediate nodes.
+   */
+  async function loadOrgChartTree(req: Request, companyId: string): Promise<OrgTreeNode[]> {
+    const forest = await filterAgentsForActor(req, await svc.orgForCompany(companyId), companyId);
+    const lean = forest.map((node) => toLeanOrgNode(node as Record<string, unknown>));
+    const users = await loadOrgChartUserSummaries(db, companyId, orgChartManagerUserIds(lean));
+    return buildOrgChartTree(lean, users);
   }
 
   router.param("id", async (req, _res, next, rawId) => {
@@ -4086,18 +4133,14 @@ export function agentRoutes(
   router.get("/companies/:companyId/org", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
-    const tree = await filterAgentsForActor(req, await svc.orgForCompany(companyId), companyId);
-    const leanTree = tree.map((node) => toLeanOrgNode(node as Record<string, unknown>));
-    res.json(leanTree);
+    res.json(await loadOrgChartTree(req, companyId));
   });
 
   router.get("/companies/:companyId/org.svg", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
     const style = (ORG_CHART_STYLES.includes(req.query.style as OrgChartStyle) ? req.query.style : "warmth") as OrgChartStyle;
-    const tree = await filterAgentsForActor(req, await svc.orgForCompany(companyId), companyId);
-    const leanTree = tree.map((node) => toLeanOrgNode(node as Record<string, unknown>));
-    const svg = renderOrgChartSvg(leanTree as unknown as OrgNode[], style);
+    const svg = renderOrgChartSvg(await loadOrgChartTree(req, companyId), style);
     res.setHeader("Content-Type", "image/svg+xml");
     res.setHeader("Cache-Control", "no-cache");
     res.send(svg);
@@ -4107,9 +4150,7 @@ export function agentRoutes(
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
     const style = (ORG_CHART_STYLES.includes(req.query.style as OrgChartStyle) ? req.query.style : "warmth") as OrgChartStyle;
-    const tree = await filterAgentsForActor(req, await svc.orgForCompany(companyId), companyId);
-    const leanTree = tree.map((node) => toLeanOrgNode(node as Record<string, unknown>));
-    const png = await renderOrgChartPng(leanTree as unknown as OrgNode[], style);
+    const png = await renderOrgChartPng(await loadOrgChartTree(req, companyId), style);
     res.setHeader("Content-Type", "image/png");
     res.setHeader("Cache-Control", "no-cache");
     res.send(png);
@@ -4308,6 +4349,20 @@ export function agentRoutes(
     const rollbackConfig = asRecord(revision.afterConfig);
     if (!rollbackConfig) {
       throw unprocessable("Invalid revision snapshot");
+    }
+    // A rollback that restores a different manager is a manager change, with
+    // the same authority requirement as a direct PATCH (self access is not
+    // enough for an agent).
+    const rollbackReportsTo = typeof rollbackConfig.reportsTo === "string" ? rollbackConfig.reportsTo : null;
+    const rollbackReportsToUserId = typeof rollbackConfig.reportsToUserId === "string" ? rollbackConfig.reportsToUserId : null;
+    if (
+      req.actor.type === "agent" &&
+      (rollbackReportsTo !== (existing.reportsTo ?? null) || rollbackReportsToUserId !== (existing.reportsToUserId ?? null))
+    ) {
+      if (rollbackReportsToUserId !== (existing.reportsToUserId ?? null)) {
+        await assertAgentActorManagerAssignment(req, existing.companyId, rollbackReportsToUserId);
+      }
+      await assertCanApplyProtectedAgentChange(req, existing, [agentManagerChangeTargetKey(existing.id)]);
     }
     assertProviderTraceSettingTransition(
       req,
@@ -4508,6 +4563,7 @@ export function agentRoutes(
       adapterConfig: normalizedAdapterConfig,
       runtimeConfig: normalizedRuntimeConfig,
     };
+    await assertAgentActorManagerAssignment(req, companyId, normalizedHireInput.reportsToUserId);
 
     const company = await db
       .select()
@@ -4617,10 +4673,16 @@ export function agentRoutes(
           redactEventPayload(
             ((normalizedHireInput.metadata ?? agent.metadata ?? {}) as Record<string, unknown>),
           ) ?? {};
+        // An agent's hire request is addressed to its human manager, if any.
+        const hireApprovalAddresseeUserId =
+          actor.actorType === "agent" && actor.actorId
+            ? await resolveActiveAgentManagerUserId(db, companyId, actor.actorId)
+            : null;
         approval = await approvalsSvc.create(companyId, {
           type: "hire_agent",
           requestedByAgentId: actor.actorType === "agent" ? actor.actorId : null,
           requestedByUserId: actor.actorType === "user" ? actor.actorId : null,
+          addresseeUserId: hireApprovalAddresseeUserId,
           status: "pending",
           payload: {
             name: normalizedHireInput.name,
@@ -4628,6 +4690,7 @@ export function agentRoutes(
             title: normalizedHireInput.title ?? null,
             icon: normalizedHireInput.icon ?? null,
             reportsTo: normalizedHireInput.reportsTo ?? null,
+            reportsToUserId: normalizedHireInput.reportsToUserId ?? null,
             capabilities: normalizedHireInput.capabilities ?? null,
             adapterType: requestedAdapterType,
             adapterConfig: requestedAdapterConfig,
@@ -4719,6 +4782,7 @@ export function agentRoutes(
   router.post("/companies/:companyId/agents", validate(createAgentSchema), async (req, res) => {
     const companyId = req.params.companyId as string;
     await assertCanCreateAgentsForCompany(req, companyId);
+    await assertAgentActorManagerAssignment(req, companyId, (req.body as { reportsToUserId?: string | null }).reportsToUserId);
 
     const company = await db
       .select()
@@ -4892,6 +4956,11 @@ export function agentRoutes(
     const existing = await getAccessibleResource(req, res, svc.getById(id), "Agent not found");
     if (!existing) return;
 
+    // agentChangeAuthority is materialized as agents:configure /
+    // agents:suggest-changes grant rows, never stored in the permissions JSON,
+    // so it is split off before the service call.
+    const { agentChangeAuthority, ...permissionsPatch } = req.body;
+
     if (req.actor.type === "agent") {
       const actorAgent = req.actor.agentId ? await svc.getById(req.actor.agentId) : null;
       if (!actorAgent || actorAgent.companyId !== existing.companyId) {
@@ -4902,16 +4971,38 @@ export function agentRoutes(
         res.status(403).json({ error: "Only CEO can manage permissions" });
         return;
       }
+      // agents:configure lets its holder rewrite any agent's profile,
+      // instructions, and lifecycle company-wide, and agents:suggest-changes is
+      // consent-gated. Letting an agent hand either out would let any agent
+      // route around that gate through the CEO, so only the Board sets it.
+      if (agentChangeAuthority !== undefined) {
+        res.status(403).json({ error: "Only board users can change agent change authority" });
+        return;
+      }
     } else {
       await assertBoardCanManageAgentsForCompany(req, existing.companyId);
     }
 
-    const agent = await svc.updatePermissions(id, req.body);
+    if (agentChangeAuthority !== undefined) {
+      // The reconcile loop re-ensures default change grants for the root CEO
+      // and bundled built-ins on every agent create and at startup, so a
+      // downgrade below that floor would silently revert. Refuse it instead.
+      const floor = agentChangeAuthorityFloor(existing);
+      if (compareAgentChangeAuthority(agentChangeAuthority, floor) < 0) {
+        throw conflict(
+          `This agent receives "${floor}" agent change authority automatically and cannot be lowered below it`,
+          { code: "agent_change_authority_locked", agentId: id, floor },
+        );
+      }
+    }
+
+    const agent = await svc.updatePermissions(id, permissionsPatch);
     if (!agent) {
       res.status(404).json({ error: "Agent not found" });
       return;
     }
 
+    const grantedByUserId = req.actor.type === "board" ? (req.actor.userId ?? null) : null;
     const effectiveCanAssignTasks =
       agent.role === "ceo" || Boolean(agent.permissions?.canCreateAgents) || req.body.canAssignTasks;
     await access.ensureMembership(agent.companyId, "agent", agent.id, "member", "active");
@@ -4921,9 +5012,28 @@ export function agentRoutes(
       agent.id,
       "tasks:assign",
       effectiveCanAssignTasks,
-      req.actor.type === "board" ? (req.actor.userId ?? null) : null,
+      grantedByUserId,
     );
+    if (agentChangeAuthority !== undefined) {
+      // Only rewrite the change grants when the level actually changes, so an
+      // existing scoped grant at the same level keeps its scope.
+      const currentGrants = await access.listPrincipalGrants(agent.companyId, "agent", agent.id);
+      const currentLevel = agentChangeAuthorityFromKeys(currentGrants.map((grant) => grant.permissionKey));
+      if (currentLevel !== agentChangeAuthority) {
+        for (const write of grantWritesForAgentChangeAuthority(agentChangeAuthority)) {
+          await access.setPrincipalPermission(
+            agent.companyId,
+            "agent",
+            agent.id,
+            write.permissionKey,
+            write.enabled,
+            grantedByUserId,
+          );
+        }
+      }
+    }
 
+    const detail = await buildAgentDetail(agent);
     const actor = getActorInfo(req);
     await logActivity(db, {
       companyId: agent.companyId,
@@ -4940,10 +5050,12 @@ export function agentRoutes(
         canCreateSkills: agent.permissions?.canCreateSkills ?? true,
         canAssignTasks: effectiveCanAssignTasks,
         trustPreset: agent.permissions?.trustPreset ?? "standard",
+        agentChangeAuthority: detail.access.agentChangeAuthority,
+        agentChangeAuthoritySource: detail.access.agentChangeAuthoritySource,
       },
     });
 
-    res.json(await buildAgentDetail(agent));
+    res.json(detail);
   });
 
   router.patch("/agents/:id/instructions-path", validate(updateAgentInstructionsPathSchema), async (req, res) => {
@@ -5352,6 +5464,19 @@ export function agentRoutes(
         },
       );
     }
+    // Who an agent reports to decides who receives its escalations and whose
+    // identity its runs use, so an agent never changes it under self access:
+    // it needs a change grant (or an accepted change consent) like a profile
+    // change, even on its own row.
+    const changesManager =
+      (hasOwn(patchData, "reportsTo") && (patchData.reportsTo ?? null) !== (existing.reportsTo ?? null)) ||
+      (hasOwn(patchData, "reportsToUserId") && (patchData.reportsToUserId ?? null) !== (existing.reportsToUserId ?? null));
+    if (req.actor.type === "agent" && changesManager) {
+      // The own-manager rule first: it needs no consent and fails fast, so a
+      // change consent is not spent on a request that can never be applied.
+      await assertAgentActorManagerAssignment(req, existing.companyId, patchData.reportsToUserId as string | null | undefined);
+      await assertCanApplyProtectedAgentChange(req, existing, [agentManagerChangeTargetKey(existing.id)]);
+    }
     const touchesProfileFields = touchesAgentProfileChangeConsentFields(patchData);
     const profileOnlyChange = touchesProfileFields && Object.keys(patchData).every((key) =>
       (AGENT_PROFILE_CHANGE_CONSENT_FIELDS as readonly string[]).includes(key),
@@ -5524,6 +5649,7 @@ export function agentRoutes(
 
     let agent: Awaited<ReturnType<typeof svc.getById>> | null = null;
     if (openApproval) {
+      await assertApprovalDecisionAllowed(db, openApproval, req.actor.userId ?? null);
       await approvalsSvc.approve(openApproval.id, decidedByUserId);
       agent = await svc.getById(id);
     } else {
@@ -5575,6 +5701,7 @@ export function agentRoutes(
     if (existing.status === "pending_approval") {
       const openApproval = await approvalsSvc.findOpenHireApprovalForAgent(existing.companyId, id);
       if (openApproval) {
+        await assertApprovalDecisionAllowed(db, openApproval, req.actor.userId ?? null);
         await approvalsSvc.reject(openApproval.id, req.actor.userId ?? "board");
         agent = await svc.getById(id);
       }

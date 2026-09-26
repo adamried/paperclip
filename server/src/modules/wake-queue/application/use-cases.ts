@@ -91,6 +91,7 @@ async function resolveResponsibleUserForQueuedRun(
   host: WakeQueueHost,
   input: {
     companyId: string;
+    agentId: string | null;
     contextSnapshot: Record<string, unknown>;
     issue: IssueSnapshot;
     requestedByActorType: "user" | "agent" | "system" | null;
@@ -103,6 +104,7 @@ async function resolveResponsibleUserForQueuedRun(
   const routineEnvContext = await host.getRoutineEnv({ companyId: input.companyId, issue: input.issue });
   return host.resolveResponsibleUserId({
     companyId: input.companyId,
+    agentId: input.agentId,
     contextSnapshot: input.contextSnapshot,
     issue: input.issue,
     routineEnvContext,
@@ -436,6 +438,7 @@ async function promoteDeferredWake(
 
   const responsibleUserId = await resolveResponsibleUserForQueuedRun(ports.host, {
     companyId: invokableAgent.companyId,
+    agentId: invokableAgent.id,
     contextSnapshot: promotedContextSnapshot,
     issue: currentIssue,
     requestedByActorType: workingCandidate.requestedByActorType,
@@ -693,6 +696,7 @@ async function runReleaseRecoveryTail(
     host,
     {
       companyId: issue.companyId,
+      agentId: recoveryAgent.id,
       contextSnapshot: recoveryContextSnapshot,
       issue,
       requestedByActorType: "system",

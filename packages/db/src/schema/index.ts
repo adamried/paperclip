@@ -101,6 +101,7 @@ export { issueTreeHoldMembers } from "./issue_tree_hold_members.js";
 export { issueExecutionDecisions } from "./issue_execution_decisions.js";
 export { issueInboxArchives } from "./issue_inbox_archives.js";
 export { userInboxAgentPolicies } from "./user_inbox_agent_policies.js";
+export { userApprovalDecisionPolicies } from "./user_approval_decision_policies.js";
 export { inboxDismissals } from "./inbox_dismissals.js";
 export { feedbackVotes } from "./feedback_votes.js";
 export { decisionTrainingExamples } from "./decision_training_examples.js";

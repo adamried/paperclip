@@ -11,6 +11,7 @@ import { JsonSchemaForm, type JsonSchemaNode, getDefaultValues } from "@/compone
 import { MarkdownBody } from "@/components/MarkdownBody";
 import { MarkdownEditor, type MentionOption } from "@/components/MarkdownEditor";
 import { ReportsToPicker } from "@/components/ReportsToPicker";
+import type { ReportsToSelection } from "@/lib/reports-to-selection";
 import {
   RoutineRunVariablesDialog,
   type RoutineRunDialogSubmitData,
@@ -558,7 +559,7 @@ function PickerGallery() {
       }),
     }),
   );
-  const [manager, setManager] = useState<string | null>("agent-cto");
+  const [manager, setManager] = useState<ReportsToSelection>({ kind: "agent", id: "agent-cto" });
   const [selectorValue, setSelectorValue] = useState("project-board-ui");
   const agentsWithTerminated: Agent[] = useMemo(
     () => [
@@ -602,7 +603,7 @@ function PickerGallery() {
         <StatePanel label="ReportsToPicker" detail="Selected manager, CEO disabled state, and filtered hierarchy choices.">
           <div className="flex flex-wrap gap-3">
             <ReportsToPicker agents={agentsWithTerminated} value={manager} onChange={setManager} excludeAgentIds={["agent-codex"]} />
-            <ReportsToPicker agents={agentsWithTerminated} value={null} onChange={() => undefined} disabled />
+            <ReportsToPicker agents={agentsWithTerminated} value={{ kind: "board" }} onChange={() => undefined} disabled />
           </div>
         </StatePanel>
         <StatePanel label="InlineEntitySelector" detail="Search/select dropdown for issue, project, and agent entities.">

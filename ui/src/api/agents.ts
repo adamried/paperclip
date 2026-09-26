@@ -1,5 +1,7 @@
 import type {
   Agent,
+  AgentChangeAuthority,
+  OrgTreeNode,
   AgentDesiredSkillEntry,
   AgentSkillAssignmentMode,
   AgentPermissions,
@@ -61,13 +63,12 @@ export interface ClaudeLoginResult {
   stderr: string;
 }
 
-export interface OrgNode {
-  id: string;
-  name: string;
-  role: string;
-  status: string;
-  reports: OrgNode[];
-}
+/**
+ * One org chart node. The API always returns a single Board root (`kind:
+ * "board"`), with people who manage agents (`kind: "user"`, id `user:<id>`)
+ * and root agents under it.
+ */
+export type OrgNode = OrgTreeNode;
 
 export interface AgentHireResponse {
   agent: Agent;
@@ -80,6 +81,8 @@ export interface AgentPermissionUpdate {
   canAssignTasks: boolean;
   trustPreset?: AgentPermissions["trustPreset"];
   authorizationPolicy?: AgentPermissions["authorizationPolicy"];
+  /** Omitted leaves the agents:configure / agents:suggest-changes grants unchanged. */
+  agentChangeAuthority?: AgentChangeAuthority;
 }
 
 export interface AgentWakeRequest {

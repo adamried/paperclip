@@ -26,6 +26,7 @@ import {
   normalizeAgentUrlKey,
   type AgentEligibilityAgent,
   type AgentApiKeyScope,
+  type ChainOfCommandRoot,
 } from "@paperclipai/shared";
 import {
   normalizePaperclipRunnerAdapterConfig,
@@ -38,6 +39,7 @@ import {
 } from "./agent-secret-bindings.js";
 import { logActivity } from "./activity-log.js";
 import { normalizeAgentPermissions } from "./agent-permissions.js";
+import { assertHumanManagerEligible, loadChainOfCommandRoot } from "./agent-manager.js";
 import { REDACTED_EVENT_VALUE, sanitizeRecord } from "../redaction.js";
 import {
   assertClaudeOAuthBindingInvariant,
@@ -69,6 +71,7 @@ const CONFIG_REVISION_FIELDS = [
   "title",
   "icon",
   "reportsTo",
+  "reportsToUserId",
   "capabilities",
   "adapterType",
   "adapterConfig",
@@ -168,6 +171,7 @@ function buildConfigSnapshot(
     title: row.title,
     icon: row.icon,
     reportsTo: row.reportsTo,
+    reportsToUserId: row.reportsToUserId ?? null,
     capabilities: row.capabilities,
     adapterType: row.adapterType,
     adapterConfig,
@@ -210,6 +214,9 @@ function configPatchFromApprovalPayload(payload: Record<string, unknown>) {
   }
   if (Object.prototype.hasOwnProperty.call(payload, "reportsTo")) {
     patch.reportsTo = typeof payload.reportsTo === "string" ? payload.reportsTo : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, "reportsToUserId")) {
+    patch.reportsToUserId = typeof payload.reportsToUserId === "string" ? payload.reportsToUserId : null;
   }
   if (Object.prototype.hasOwnProperty.call(payload, "capabilities")) {
     patch.capabilities = typeof payload.capabilities === "string" ? payload.capabilities : null;
@@ -287,6 +294,8 @@ function configPatchFromSnapshot(snapshot: unknown): Partial<typeof agents.$infe
     title: typeof snapshot.title === "string" || snapshot.title === null ? snapshot.title : null,
     reportsTo:
       typeof snapshot.reportsTo === "string" || snapshot.reportsTo === null ? snapshot.reportsTo : null,
+    // Older revisions predate the column; treat a missing value as "no person".
+    reportsToUserId: typeof snapshot.reportsToUserId === "string" ? snapshot.reportsToUserId : null,
     capabilities:
       typeof snapshot.capabilities === "string" || snapshot.capabilities === null
         ? snapshot.capabilities
@@ -463,6 +472,48 @@ export function agentService(db: Db) {
       const next = await getById(cursor);
       cursor = next?.reportsTo ?? null;
     }
+  }
+
+  /**
+   * An agent reports to at most one of: an agent (`reportsTo`), a person
+   * (`reportsToUserId`), or the Board (both null). Validates whichever manager
+   * the patch sets and clears the other so the pair never both hold a value.
+   * `agentId` is null on create (no cycle check possible or needed).
+   */
+  async function applyManagerExclusivity(
+    companyId: string,
+    agentId: string | null,
+    data: { reportsTo?: string | null; reportsToUserId?: string | null },
+    existing?: { reportsTo: string | null; reportsToUserId?: string | null } | null,
+  ) {
+    const setsAgent = data.reportsTo !== undefined;
+    const setsUser = data.reportsToUserId !== undefined;
+    if (!setsAgent && !setsUser) return;
+    if (data.reportsTo && data.reportsToUserId) {
+      throw unprocessable("Agent cannot report to both an agent and a person", {
+        code: "agent_manager_conflict",
+      });
+    }
+    if (data.reportsTo) {
+      // An unchanged agent manager is not re-validated (it was valid when set).
+      if (data.reportsTo !== existing?.reportsTo) {
+        await ensureManager(companyId, data.reportsTo);
+        if (agentId) await assertNoCycle(agentId, data.reportsTo);
+      }
+      data.reportsToUserId = null;
+      return;
+    }
+    if (data.reportsToUserId) {
+      // Likewise an unchanged person: a revision rollback or a no-op save must
+      // not fail because the manager has since been suspended; consumers
+      // already skip inactive managers at use time.
+      if (data.reportsToUserId !== (existing?.reportsToUserId ?? null)) {
+        await assertHumanManagerEligible(db, companyId, data.reportsToUserId);
+      }
+      data.reportsTo = null;
+      return;
+    }
+    if (setsAgent && agentId) await assertNoCycle(agentId, data.reportsTo);
   }
 
   async function assertCompanyShortnameAvailable(
@@ -719,12 +770,7 @@ export function agentService(db: Db) {
       }
     }
 
-    if (data.reportsTo !== undefined) {
-      if (data.reportsTo) {
-        await ensureManager(existing.companyId, data.reportsTo);
-      }
-      await assertNoCycle(id, data.reportsTo);
-    }
+    await applyManagerExclusivity(existing.companyId, id, data, existing);
 
     if (data.name !== undefined) {
       const previousShortname = normalizeAgentUrlKey(existing.name);
@@ -870,9 +916,7 @@ export function agentService(db: Db) {
 
     create: async (companyId: string, data: Omit<typeof agents.$inferInsert, "companyId">, options?: CreateAgentOptions) => {
       assertBuiltInAgentMetadataMutationAllowed(null, data.metadata, options);
-      if (data.reportsTo) {
-        await ensureManager(companyId, data.reportsTo);
-      }
+      await applyManagerExclusivity(companyId, null, data);
 
       const existingAgents = await db
         .select({ id: agents.id, name: agents.name, status: agents.status })
@@ -1091,6 +1135,10 @@ export function agentService(db: Db) {
         if (!existing || existing.status !== "pending_approval") return null;
         const approvedPatch = approvedPayload ? configPatchFromApprovalPayload(approvedPayload) : {};
         let patch = { ...approvedPatch } as Partial<typeof agents.$inferInsert>;
+        // The approval payload can be resubmitted by the requester, so the
+        // manager fields it carries get the same validation as a direct write:
+        // one manager at most, same company, eligible person.
+        await agentService(txDb).validateManagerPatch(existing.companyId, existing.id, patch, existing);
         let approvalBindingDecision: ClaudeOAuthBindingInvariantDecision | null = null;
         if (
           Object.prototype.hasOwnProperty.call(patch, "adapterConfig") &&
@@ -1351,6 +1399,24 @@ export function agentService(db: Db) {
         currentId = mgr.reportsTo ?? null;
       }
       return chain;
+    },
+
+    /** Validates and normalizes reportsTo / reportsToUserId on a patch in place. */
+    validateManagerPatch: applyManagerExclusivity,
+
+    getChainOfCommandRoot: async (agentId: string): Promise<ChainOfCommandRoot> => {
+      // Walk to the top agent of the chain (the agent itself when it has no
+      // agent manager), then ask who that top agent answers to.
+      const visited = new Set<string>();
+      let top = await getById(agentId);
+      while (top?.reportsTo && !visited.has(top.reportsTo) && visited.size < 50) {
+        visited.add(top.reportsTo);
+        const mgr = await getById(top.reportsTo);
+        if (!mgr) break;
+        top = mgr;
+      }
+      if (!top) return { kind: "board" };
+      return loadChainOfCommandRoot(db, top.companyId, top.reportsToUserId ?? null);
     },
 
     runningForAgent: (agentId: string) =>

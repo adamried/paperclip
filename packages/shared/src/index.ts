@@ -515,6 +515,8 @@ export {
   JOIN_REQUEST_TYPES,
   JOIN_REQUEST_STATUSES,
   PERMISSION_KEYS,
+  AGENT_CHANGE_AUTHORITY_LEVELS,
+  AGENT_CHANGE_AUTHORITY_SOURCES,
   TOOL_ACTION_REQUEST_STATUSES,
   TOOL_APPLICATION_STATUSES,
   TOOL_APPLICATION_TYPES,
@@ -700,6 +702,8 @@ export {
   type JoinRequestType,
   type JoinRequestStatus,
   type PermissionKey,
+  type AgentChangeAuthority,
+  type AgentChangeAuthoritySource,
   type ConnectionTokenIssuancePath,
   type ConnectionTokenIssuanceOutcome,
   type ToolAccessActivityAction,
@@ -919,6 +923,9 @@ export type {
   Agent,
   AgentAccessState,
   AgentChainOfCommandEntry,
+  ChainOfCommandRoot,
+  OrgTreeNode,
+  OrgTreeNodeKind,
   AgentDetail,
   ClearAgentErrorResponse,
   AgentPermissions,
@@ -1724,6 +1731,16 @@ export {
   type InboxAgentPolicyMode,
   type InboxAgentPolicy,
 } from "./types/inbox-agent-policy.js";
+export {
+  approvalDecisionPolicyModeSchema,
+  updateApprovalDecisionPolicySchema,
+  type UpdateApprovalDecisionPolicy,
+} from "./validators/approval-decision-policy.js";
+export {
+  APPROVAL_DECISION_POLICIES,
+  type ApprovalDecisionPolicyMode,
+  type ApprovalDecisionPolicy,
+} from "./types/approval-decision-policy.js";
 export {
   RESOURCE_MEMBERSHIP_STATES,
   type ResourceMembershipResourceType,

@@ -52,6 +52,7 @@ const mockAgentService = vi.hoisted(() => ({
   rollbackConfigRevision: vi.fn(),
   updatePermissions: vi.fn(),
   getChainOfCommand: vi.fn(),
+  getChainOfCommandRoot: vi.fn(async () => ({ kind: "board" })),
   resolveByReference: vi.fn(),
 }));
 
@@ -222,7 +223,13 @@ function registerModuleMocks() {
   }));
 }
 
-function createDbStub(options: { requireBoardApprovalForNewAgents?: boolean } = {}) {
+type DbStubOptions = {
+  requireBoardApprovalForNewAgents?: boolean;
+  /** Extra columns every stubbed select row carries (agent + membership lookups share the one shape). */
+  selectRow?: Record<string, unknown>;
+};
+
+function createDbStub(options: DbStubOptions = {}) {
   return {
     select: vi.fn().mockReturnValue({
       from: vi.fn().mockReturnValue({
@@ -232,6 +239,7 @@ function createDbStub(options: { requireBoardApprovalForNewAgents?: boolean } = 
               id: companyId,
               name: "Paperclip",
               requireBoardApprovalForNewAgents: options.requireBoardApprovalForNewAgents ?? false,
+              ...(options.selectRow ?? {}),
             }])),
           ),
         }),
@@ -276,7 +284,7 @@ describe.sequential("agent permission routes", () => {
     return { errorHandler, agentRoutes };
   });
 
-  function createApp(actor: Record<string, unknown>, dbOptions: { requireBoardApprovalForNewAgents?: boolean } = {}) {
+  function createApp(actor: Record<string, unknown>, dbOptions: DbStubOptions = {}) {
     const { errorHandler, agentRoutes } = routeModules.value;
     const app = express();
     app.use(express.json());
@@ -1816,6 +1824,323 @@ describe.sequential("agent permission routes", () => {
       canAssignTasks: true,
     });
     expect(res.body.permissions.canCreateSkills).toBe(false);
+  });
+
+  it("writes change-authority grants for a board direct level and keeps the field out of the permissions JSON", async () => {
+    mockAgentService.updatePermissions.mockResolvedValue({ ...baseAgent, role: "chief_of_staff", reportsTo: "ceo-agent" });
+    // The route reads the current grants before writing (to skip a no-op) and
+    // again for the response: none before, the new grant after.
+    mockAccessService.listPrincipalGrants
+      .mockResolvedValueOnce([{ permissionKey: "tasks:assign", scope: null }])
+      .mockResolvedValue([
+        { permissionKey: "tasks:assign", scope: null },
+        { permissionKey: "agents:configure", scope: null },
+      ]);
+
+    const app = await createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      companyIds: [companyId],
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/permissions`)
+      .send({ canCreateAgents: false, canAssignTasks: true, agentChangeAuthority: "direct" }));
+
+    expect(res.status).toBe(200);
+    expect(mockAgentService.updatePermissions).toHaveBeenCalledWith(agentId, {
+      canCreateAgents: false,
+      canAssignTasks: true,
+    });
+    expect(mockAccessService.setPrincipalPermission).toHaveBeenCalledWith(
+      companyId, "agent", agentId, "agents:configure", true, "board-user",
+    );
+    expect(mockAccessService.setPrincipalPermission).toHaveBeenCalledWith(
+      companyId, "agent", agentId, "agents:suggest-changes", false, "board-user",
+    );
+    expect(res.body.access.agentChangeAuthority).toBe("direct");
+    expect(res.body.access.agentChangeAuthoritySource).toBe("explicit_grant");
+    expect(mockLogActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "agent.permissions_updated",
+      details: expect.objectContaining({
+        agentChangeAuthority: "direct",
+        agentChangeAuthoritySource: "explicit_grant",
+      }),
+    }));
+  });
+
+  it("writes only the suggest grant for a board suggest level", async () => {
+    mockAgentService.updatePermissions.mockResolvedValue({ ...baseAgent, role: "chief_of_staff", reportsTo: "ceo-agent" });
+    mockAccessService.listPrincipalGrants
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([{ permissionKey: "agents:suggest-changes", scope: null }]);
+
+    const app = await createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      companyIds: [companyId],
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/permissions`)
+      .send({ canCreateAgents: false, canAssignTasks: true, agentChangeAuthority: "suggest" }));
+
+    expect(res.status).toBe(200);
+    expect(mockAccessService.setPrincipalPermission).toHaveBeenCalledWith(
+      companyId, "agent", agentId, "agents:configure", false, "board-user",
+    );
+    expect(mockAccessService.setPrincipalPermission).toHaveBeenCalledWith(
+      companyId, "agent", agentId, "agents:suggest-changes", true, "board-user",
+    );
+    expect(res.body.access.agentChangeAuthority).toBe("suggest");
+    expect(res.body.access.agentChangeAuthoritySource).toBe("explicit_grant");
+  });
+
+  it("clears both change grants for a board none level", async () => {
+    mockAgentService.updatePermissions.mockResolvedValue({ ...baseAgent, role: "chief_of_staff", reportsTo: "ceo-agent" });
+    mockAccessService.listPrincipalGrants
+      .mockResolvedValueOnce([{ permissionKey: "agents:configure", scope: null }])
+      .mockResolvedValue([]);
+
+    const app = await createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      companyIds: [companyId],
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/permissions`)
+      .send({ canCreateAgents: false, canAssignTasks: true, agentChangeAuthority: "none" }));
+
+    expect(res.status).toBe(200);
+    expect(mockAccessService.setPrincipalPermission).toHaveBeenCalledWith(
+      companyId, "agent", agentId, "agents:configure", false, "board-user",
+    );
+    expect(mockAccessService.setPrincipalPermission).toHaveBeenCalledWith(
+      companyId, "agent", agentId, "agents:suggest-changes", false, "board-user",
+    );
+    expect(res.body.access.agentChangeAuthority).toBe("none");
+    expect(res.body.access.agentChangeAuthoritySource).toBe("none");
+  });
+
+  it("leaves change grants untouched when agentChangeAuthority is omitted", async () => {
+    mockAgentService.updatePermissions.mockResolvedValue({ ...baseAgent });
+    mockAccessService.listPrincipalGrants.mockResolvedValue([
+      { permissionKey: "agents:suggest-changes", scope: null },
+    ]);
+
+    const app = await createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      companyIds: [companyId],
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/permissions`)
+      .send({ canCreateAgents: false, canAssignTasks: true }));
+
+    expect(res.status).toBe(200);
+    expect(mockAccessService.setPrincipalPermission).toHaveBeenCalledTimes(1);
+    expect(mockAccessService.setPrincipalPermission).toHaveBeenCalledWith(
+      companyId, "agent", agentId, "tasks:assign", true, "board-user",
+    );
+    expect(res.body.access.agentChangeAuthority).toBe("suggest");
+  });
+
+  it("rejects agentChangeAuthority from a CEO agent actor without touching permissions", async () => {
+    mockAgentService.getById.mockImplementation(async (id: string) =>
+      id === "ceo-agent"
+        ? { ...baseAgent, id: "ceo-agent", role: "ceo", permissions: { canCreateAgents: true } }
+        : { ...baseAgent });
+
+    const app = await createApp({
+      type: "agent",
+      agentId: "ceo-agent",
+      companyId,
+      runId: "run-1",
+      source: "agent_key",
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/permissions`)
+      .send({ canCreateAgents: false, canAssignTasks: true, agentChangeAuthority: "direct" }));
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("Only board users can change agent change authority");
+    expect(mockAgentService.updatePermissions).not.toHaveBeenCalled();
+    expect(mockAccessService.setPrincipalPermission).not.toHaveBeenCalled();
+  });
+
+  it("reports the root CEO level as an automatic default and refuses to lower it", async () => {
+    const rootCeo = { ...baseAgent, role: "ceo", reportsTo: null, permissions: { canCreateAgents: true } };
+    mockAgentService.getById.mockResolvedValue(rootCeo);
+    mockAgentService.updatePermissions.mockResolvedValue(rootCeo);
+    mockAccessService.listPrincipalGrants.mockResolvedValue([
+      { permissionKey: "agents:configure", scope: null },
+      { permissionKey: "skills:create", scope: null },
+    ]);
+
+    const app = await createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      companyIds: [companyId],
+    });
+
+    const detail = await requestApp(app, (baseUrl) => request(baseUrl).get(`/api/agents/${agentId}`));
+    expect(detail.status).toBe(200);
+    expect(detail.body.access.agentChangeAuthority).toBe("direct");
+    expect(detail.body.access.agentChangeAuthoritySource).toBe("root_ceo_default");
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/permissions`)
+      .send({ canCreateAgents: true, canAssignTasks: true, agentChangeAuthority: "suggest" }));
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe("agent_change_authority_locked");
+    expect(mockAgentService.updatePermissions).not.toHaveBeenCalled();
+    expect(mockAccessService.setPrincipalPermission).not.toHaveBeenCalled();
+  });
+
+  it("does not rewrite change grants when the level is unchanged", async () => {
+    mockAgentService.updatePermissions.mockResolvedValue({ ...baseAgent });
+    mockAccessService.listPrincipalGrants.mockResolvedValue([
+      { permissionKey: "agents:configure", scope: { allow: ["subtree:x"] } },
+    ]);
+
+    const app = await createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      companyIds: [companyId],
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/permissions`)
+      .send({ canCreateAgents: false, canAssignTasks: true, agentChangeAuthority: "direct" }));
+
+    expect(res.status).toBe(200);
+    expect(mockAccessService.setPrincipalPermission).toHaveBeenCalledTimes(1);
+    expect(mockAccessService.setPrincipalPermission).toHaveBeenCalledWith(
+      companyId, "agent", agentId, "tasks:assign", true, "board-user",
+    );
+  });
+
+  it("denies an agent changing its own manager without a change grant", async () => {
+    mockAgentService.getById.mockImplementation(async (id: string) =>
+      id === agentId ? { ...baseAgent } : null);
+    mockAccessService.decide.mockImplementation(async (input: { action?: string; scope?: { requiresChangeGrant?: boolean } }) => (
+      input.action === "agent_config:update" && input.scope?.requiresChangeGrant
+        ? { allowed: false, reason: "deny_no_grant", explanation: "Missing permission: agents:configure or agents:suggest-changes." }
+        : { allowed: true, reason: "allow_self", explanation: "Allowed by test." }
+    ));
+
+    // The stub row makes manager-1 the acting agent's own active manager, so
+    // the own-manager rule passes and only the change-grant guard stands in
+    // the way of both bodies.
+    const app = await createApp(
+      { type: "agent", agentId, companyId, runId: "run-1", source: "agent_key" },
+      { selectRow: { reportsToUserId: "manager-1", status: "active", membershipRole: "owner" } },
+    );
+
+    for (const body of [{ reportsToUserId: "manager-1" }, { reportsTo: "22222222-2222-4222-8222-222222222222" }]) {
+      mockAccessService.decide.mockClear();
+      const res = await requestApp(app, (baseUrl) => request(baseUrl)
+        .patch(`/api/agents/${agentId}`)
+        .send(body));
+      expect(res.status).toBe(403);
+      expect(res.body.code).not.toBe("agent_manager_assignment_not_allowed");
+      expect(mockAccessService.decide).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "agent_config:update", scope: expect.objectContaining({ requiresChangeGrant: true }) }),
+      );
+    }
+    expect(mockAgentService.update).not.toHaveBeenCalled();
+  });
+
+  it("stops an agent assigning anyone but its own manager, before any consent is spent", async () => {
+    const otherAgentId = "44444444-4444-4444-8444-444444444444";
+    mockAgentService.getById.mockImplementation(async (id: string) =>
+      id === otherAgentId ? { ...baseAgent, id: otherAgentId, name: "Peer" } : null);
+    mockAccessService.decide.mockResolvedValue({ allowed: true, reason: "allow_test", explanation: "Allowed by test." });
+
+    // The acting agent reports to manager-1 (the stub row doubles as the
+    // agent row and manager-1's active membership).
+    const app = await createApp(
+      { type: "agent", agentId, companyId, runId: "run-1", source: "agent_key" },
+      { selectRow: { reportsToUserId: "manager-1", status: "active", membershipRole: "owner" } },
+    );
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${otherAgentId}`)
+      .send({ reportsToUserId: "someone-else" }));
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("agent_manager_assignment_not_allowed");
+    expect(mockAgentService.update).not.toHaveBeenCalled();
+    // The own-manager rule runs before the change-consent guard.
+    expect(mockAccessService.decide).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: "agent_config:update", scope: expect.objectContaining({ requiresChangeGrant: true }) }),
+    );
+  });
+
+  it("lets an agent with a change grant assign its own manager to an agent it edits", async () => {
+    const otherAgentId = "44444444-4444-4444-8444-444444444444";
+    const peer = { ...baseAgent, id: otherAgentId, name: "Peer" };
+    mockAgentService.getById.mockImplementation(async (id: string) => (id === otherAgentId ? peer : null));
+    mockAgentService.update.mockResolvedValue({ ...peer, reportsToUserId: "manager-1" });
+    mockAccessService.decide.mockResolvedValue({ allowed: true, reason: "allow_test", explanation: "Allowed by test." });
+
+    const app = await createApp(
+      { type: "agent", agentId, companyId, runId: "run-1", source: "agent_key" },
+      { selectRow: { reportsToUserId: "manager-1", status: "active", membershipRole: "owner" } },
+    );
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${otherAgentId}`)
+      .send({ reportsToUserId: "manager-1" }));
+
+    expect(res.status).toBe(200);
+    expect(mockAgentService.update).toHaveBeenCalledWith(
+      otherAgentId,
+      expect.objectContaining({ reportsToUserId: "manager-1" }),
+      expect.anything(),
+    );
+  });
+
+  it("holds an agent's configuration rollback to the own-manager rule", async () => {
+    const revisionId = "33333333-3333-4333-8333-333333333333";
+    mockAgentService.getById.mockImplementation(async (id: string) => (id === agentId ? { ...baseAgent } : null));
+    mockAgentService.getConfigRevision.mockResolvedValue({
+      id: revisionId,
+      afterConfig: {
+        adapterType: "process",
+        adapterConfig: {},
+        runtimeConfig: {},
+        reportsTo: null,
+        reportsToUserId: "someone-else",
+      },
+    });
+    mockAccessService.decide.mockResolvedValue({ allowed: true, reason: "allow_test", explanation: "Allowed by test." });
+
+    const app = await createApp({ type: "agent", agentId, companyId, runId: "run-1", source: "agent_key" });
+
+    const res = await requestApp(app, (baseUrl) =>
+      request(baseUrl).post(`/api/agents/${agentId}/config-revisions/${revisionId}/rollback`),
+    );
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("agent_manager_assignment_not_allowed");
+    expect(mockAgentService.rollbackConfigRevision).not.toHaveBeenCalled();
   });
 
   it("rejects CEO permission updates outside the caller company scope", async () => {

@@ -157,6 +157,7 @@ Invariant: every business record belongs to exactly one company.
 - `icon` text null
 - `status` enum: `active | paused | idle | running | error | pending_approval | terminated`
 - `reports_to` uuid fk `agents.id` null
+- `reports_to_user_id` text null; a human company member as manager (see 9.12)
 - `capabilities` text null
 - `adapter_type` text; built-ins include `process`, `http`, `claude_local`, `codex_local`, `gemini_local`, `opencode_local`, `pi_local`, `cursor`, `hermes_local`, `hermes_gateway`, and `openclaw_gateway`
 - `adapter_config` jsonb not null
@@ -173,6 +174,8 @@ Invariant: every business record belongs to exactly one company.
 Invariants:
 
 - agent and manager must be in same company
+- at most one of `reports_to` / `reports_to_user_id` is set; both null means the agent reports to the Board
+- `reports_to_user_id` must be an active owner, admin, or operator member of the company when set
 - no cycles in reporting tree
 - `terminated` agents cannot be resumed
 
@@ -575,6 +578,8 @@ Detailed ownership, execution, blocker, active-run watchdog, crash-recovery, and
 | Create company | yes | no |
 | Hire/create agent | yes (direct) | request via approval |
 | Pause/resume agent | yes | pause: no; resume: direct `agents:configure` grant only |
+| Decide an approval addressed to a person | yes, unless the addressee set `addressee_only` (then only they can) | no |
+| Reconfigure another agent (profile, instructions, resume) | yes | none by default; Board grants `suggest` (consent-gated `agents:suggest-changes`) or `direct` (`agents:configure`) via `agentChangeAuthority` on `PATCH /agents/:agentId/permissions`; the root CEO receives `direct` automatically |
 | Create/update task | yes | yes |
 | Force reassign task | yes | limited |
 | Approve strategy/hire requests | yes | no |
@@ -591,6 +596,13 @@ agent actor calling `POST /agents/:agentId/resume` must pass the protected
 access does not bypass that decision, and `agents:suggest-changes` alone cannot
 apply the lifecycle change. Pause, clear-error, terminate, approval, and
 key-management routes remain board-only.
+
+The `agentChangeAuthority` field on `PATCH /agents/:agentId/permissions` is
+board-only: agent actors, including the CEO, receive `403` when it is present.
+The route materializes it as `agents:configure` / `agents:suggest-changes`
+grant rows and never stores it in the `permissions` JSON. Levels the reconcile
+loop re-ensures (the root CEO's `direct`, a built-in agent's default) cannot be
+lowered and return `409 agent_change_authority_locked`.
 
 ### 9.3.1 Shared default-open issue writes
 
@@ -975,6 +987,91 @@ Ownership split:
 
 - **Core / Free:** permission key and scoped-grant enforcement; responsible-user resolution; default-open, disabled, and allowlist policy modes; archive/unarchive APIs; per-user archive persistence; resurfacing behavior; activity audit records; and stable denial codes.
 - **Paperclip EE / Enterprise:** centralized policy administration beyond the per-user controls, organization-wide presets, policy simulation, bulk inbox operations, advanced compliance reporting, and richer administrative audit UX. EE may extend policy management surfaces but must not weaken core company boundaries, user policy restrictions, scoped grants, or audit requirements.
+
+## 9.12 The Board, Human Managers, and the Org Chart
+
+The org tree has one root: the Board. An agent reports to exactly one of an
+agent (`reports_to`), a person (`reports_to_user_id`), or the Board (both null).
+Setting one manager clears the other. A person can manage agents only while
+they are an active owner, admin, or operator member of the company; viewers are
+read-only and are refused with `422 agent_manager_not_eligible`. Setting both
+returns `422 agent_manager_conflict`.
+
+A company does not need a `ceo`-role agent. Root agents managed by people are
+valid, and the join-request approval path roots a joined agent under the Board
+when no CEO exists.
+
+Reads:
+
+- `GET /api/companies/:companyId/org` returns a single `kind: "board"` root
+  (`id: "board"`), with `kind: "user"` nodes (`id: "user:<userId>"`) for the
+  people who manage root agents and `kind: "agent"` nodes under their manager.
+  An empty company returns `[]`. The SVG and PNG exports render the same tree.
+- `GET /api/agents/:agentId` includes `chainOfCommandRoot`: `{ kind: "board" }`
+  or `{ kind: "user", id, name, email, image, active }`. `chainOfCommand` stays
+  agents-only so agents can keep treating its ids as agent ids.
+
+A suspended or downgraded manager is kept on the agent and flagged
+(`active: false`, org node `status: "inactive"`); it is not silently re-rooted.
+Company export never writes human manager ids; an import that carries one warns
+and leaves the agent reporting to the Board.
+
+Onboarding offers two first hires: an AI CEO (role `ceo`, reports to the
+Board) or, when the customer runs the company, a `chief_of_staff` that reports
+to the onboarding user. The server gives a non-CEO first hire the
+chief-of-staff onboarding persona.
+
+### 9.12.1 What a human manager receives
+
+- **Responsible user.** When a run, routine, or activity has no work-item or
+  requester identity to act under, the agent's active human manager is used
+  before the company default. Runs record `executionIdentityCause:
+  "agent_manager"`, distinct from `"company_default"`, which several consumers
+  treat as "no real identity". A routine stores its responsible user as
+  configuration; at dispatch, a stored person whose membership is suspended,
+  archived, or viewer is dropped from the routine run, which then resolves
+  its identity at heartbeat seed time (assignee's active manager, then the
+  company default) with the matching cause, like a routine that never stored
+  one. Startup reconciliation of built-in agents never replaces a human
+  manager.
+- **Approvals.** `approvals.addressee_user_id` names the person an approval is
+  addressed to. An agent's request (hire requests and high-risk tool actions
+  included) is always addressed to the acting agent's own active manager: the
+  body's `requestedByAgentId` is ignored for agent actors, an explicit `null`
+  is treated as omitted, and naming anyone else is `422
+  approval_addressee_not_allowed`. A Board actor may address any active
+  non-viewer member, or `null` for the Board at large. Addressed approvals
+  appear in the addressee's inbox and badge counts only; the Approvals page
+  lists all.
+- **Interactions.** A human-facing issue-thread interaction created by an agent
+  that reports to a person, with no addressee given, is addressed to the
+  person the run acts for (the source run's responsible user, if still an
+  active member) and otherwise to the agent's manager; an explicit `null`
+  keeps it open to the Board. Cards from agents that report to the Board or to
+  another agent get no default addressee. The addressee is then the sole human
+  resolver, as for any addressed interaction. A defaulted addressee is ignored
+  by idempotent-retry comparison. The formal approval for a high-risk tool
+  action uses the same default as its paired card.
+- **Agents creating agents.** An agent that hires or creates another agent may
+  make it report to the Board, to an agent, or to the acting agent's own
+  manager only (`403 agent_manager_assignment_not_allowed`).
+- **Decision policy.** `user_approval_decision_policies` holds a per-person,
+  per-company choice: `any_board` (default) or `addressee_only`. Under
+  `addressee_only`, every decision path (the approval routes, the pending-agent
+  approve and terminate shortcuts, plugin decide) returns `403
+  approval_addressee_only` for any other user, instance admins included; the
+  message names the addressee. It is the addressee's consent boundary, so the
+  only endpoints are self-service:
+  `GET/PUT /api/companies/:companyId/users/me/approval-decision-policy`.
+  Administrators change the agent's manager instead of loosening the policy.
+- **Agents never set their own manager.** An agent actor's `PATCH` that touches
+  `reportsTo` or `reportsToUserId` needs a change grant or accepted change
+  consent, even on its own row; self access is not enough.
+- An inactive manager or addressee (suspended or downgraded to viewer) is
+  skipped by all of the above: routing and identity fall through to the Board
+  / company default, and an addressed approval or count no longer binds
+  anyone. A manager-derived run identity is never stamped onto the issue as
+  its responsible user.
 
 ## 10. API Contract (REST)
 

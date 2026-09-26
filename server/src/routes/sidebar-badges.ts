@@ -81,8 +81,9 @@ export function sidebarBadgeRoutes(db: Db) {
     const badges = await svc.get(companyId, {
       dismissals: dismissedAtByKey,
       joinRequests: visibleJoinRequests,
+      userId: req.actor.userId ?? null,
     });
-    const summary = await dashboard.summary(companyId);
+    const summary = await dashboard.summary(companyId, req.actor.userId ?? null);
     const hasFailedRuns = badges.failedRuns > 0;
     const alertsCount =
       (summary.agents.error > 0 && !hasFailedRuns ? 1 : 0) +
