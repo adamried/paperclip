@@ -63,6 +63,8 @@ describe("approvalService resolution idempotency", () => {
     mockAgentService.activatePendingApproval.mockResolvedValue({ agent: { id: "agent-1" }, activated: true });
     mockAgentService.create.mockResolvedValue({ id: "agent-1" });
     mockAgentService.terminate.mockResolvedValue(undefined);
+    mockAgentService.getById.mockResolvedValue(null);
+    mockAgentService.validateManagerPatch.mockResolvedValue(undefined);
     mockNotifyHireApproved.mockResolvedValue(undefined);
   });
 
@@ -126,6 +128,20 @@ describe("approvalService resolution idempotency", () => {
     // The status never flipped, so the approval stays decidable.
     expect(dbStub.db.update).not.toHaveBeenCalled();
     expect(mockAgentService.activatePendingApproval).not.toHaveBeenCalled();
+  });
+
+  it("validates manager fields for a payload-only hire before the status flips", async () => {
+    mockAgentService.validateManagerPatch.mockRejectedValue(new Error("agent_manager_not_eligible"));
+    const payload = { name: "Helper", role: "general", reportsToUserId: "user-1" };
+    const dbStub = createDbStub([[{ ...createApproval("pending"), payload }]], []);
+
+    const svc = approvalService(dbStub.db as any);
+    await expect(svc.approve("approval-1", "board", "ship it")).rejects.toThrow("agent_manager_not_eligible");
+
+    expect(mockAgentService.getById).not.toHaveBeenCalled();
+    expect(mockAgentService.validateManagerPatch).toHaveBeenCalledWith("company-1", null, { reportsToUserId: "user-1" });
+    expect(dbStub.db.update).not.toHaveBeenCalled();
+    expect(mockAgentService.create).not.toHaveBeenCalled();
   });
 
   it("skips manager validation when the payload's agent is not this approval's pending agent", async () => {

@@ -1600,6 +1600,16 @@ describe("isApprovalVisibleInMine with an addressee", () => {
     expect(isApprovalVisibleInMine(addressed, null)).toBe(false);
   });
 
+  it("opens an addressed approval back up once the addressee is no longer eligible", () => {
+    const addressed = { ...makeApproval("pending"), addresseeUserId: "user-1" };
+    const eligible = new Set(["user-1", "user-2"]);
+    expect(isApprovalVisibleInMine(addressed, "user-2", eligible)).toBe(false);
+    // user-1 suspended or downgraded to viewer: the directory no longer lists them.
+    expect(isApprovalVisibleInMine(addressed, "user-2", new Set(["user-2"]))).toBe(true);
+    // Directory not loaded yet: assume the addressee is still eligible.
+    expect(isApprovalVisibleInMine(addressed, "user-2", null)).toBe(false);
+  });
+
   it("keeps unaddressed actionable approvals visible to everyone", () => {
     expect(isApprovalVisibleInMine(makeApproval("pending"), "user-2")).toBe(true);
     expect(isApprovalVisibleInMine(makeApproval("pending"), null)).toBe(true);

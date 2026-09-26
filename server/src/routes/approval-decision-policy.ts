@@ -1,7 +1,7 @@
 import { Router, type Request } from "express";
 import type { Db } from "@paperclipai/db";
 import { updateApprovalDecisionPolicySchema } from "@paperclipai/shared";
-import { unauthorized } from "../errors.js";
+import { forbidden } from "../errors.js";
 import { validate } from "../middleware/validate.js";
 import { approvalDecisionPolicyService, logActivity } from "../services/index.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
@@ -15,7 +15,8 @@ export function approvalDecisionPolicyRoutes(db: Db) {
   const policies = approvalDecisionPolicyService(db);
 
   function selfUserId(req: Request) {
-    if (req.actor.type !== "board" || !req.actor.userId) throw unauthorized("Board user context required");
+    // An authenticated agent is not unauthenticated; it is simply not a person.
+    if (req.actor.type !== "board" || !req.actor.userId) throw forbidden("Board user context required");
     return req.actor.userId;
   }
 

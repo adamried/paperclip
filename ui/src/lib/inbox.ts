@@ -778,13 +778,14 @@ export function getApprovalsForTab(
   tab: InboxTab,
   filter: InboxApprovalFilter,
   currentUserId?: string | null,
+  eligibleAddresseeIds?: ReadonlySet<string> | null,
 ): Approval[] {
   const sortedApprovals = [...approvals].sort(
     (a, b) => normalizeTimestamp(b.updatedAt) - normalizeTimestamp(a.updatedAt),
   );
 
   if (tab === "mine") {
-    return sortedApprovals.filter((approval) => isApprovalVisibleInMine(approval, currentUserId));
+    return sortedApprovals.filter((approval) => isApprovalVisibleInMine(approval, currentUserId, eligibleAddresseeIds));
   }
   if (tab === "recent") return sortedApprovals;
   if (tab === "unread") {
@@ -798,15 +799,24 @@ export function getApprovalsForTab(
   });
 }
 
+/**
+ * `eligibleAddresseeIds` is the set of people who can currently be addressed
+ * (active, non-viewer members). An addressee outside that set has left or
+ * been downgraded, so the approval opens back up to the Board, matching the
+ * server's attention and badge counts. When the set is not loaded yet the
+ * addressee is assumed to be eligible.
+ */
 export function isApprovalVisibleInMine(
   approval: Approval,
   currentUserId?: string | null,
+  eligibleAddresseeIds?: ReadonlySet<string> | null,
 ): boolean {
   if (ACTIONABLE_APPROVAL_STATUSES.has(approval.status)) {
     // An approval addressed to a person is in that person's inbox only; the
     // Approvals page still lists it for everyone.
     const addressee = approval.addresseeUserId ?? null;
-    return addressee === null || addressee === currentUserId;
+    if (addressee === null || addressee === currentUserId) return true;
+    return eligibleAddresseeIds ? !eligibleAddresseeIds.has(addressee) : false;
   }
   if (!currentUserId) return false;
   return approval.requestedByUserId === currentUserId || approval.decidedByUserId === currentUserId;
@@ -1275,6 +1285,7 @@ export function computeInboxBadgeData({
   dismissedAlerts,
   dismissedAtByKey,
   currentUserId,
+  eligibleAddresseeIds,
 }: {
   approvals: Approval[];
   joinRequests: JoinRequest[];
@@ -1284,10 +1295,11 @@ export function computeInboxBadgeData({
   dismissedAlerts: Set<string>;
   dismissedAtByKey: ReadonlyMap<string, number>;
   currentUserId?: string | null;
+  eligibleAddresseeIds?: ReadonlySet<string> | null;
 }): InboxBadgeData {
   const actionableApprovals = approvals.filter(
     (approval) =>
-      isApprovalVisibleInMine(approval, currentUserId) &&
+      isApprovalVisibleInMine(approval, currentUserId, eligibleAddresseeIds) &&
       ACTIONABLE_APPROVAL_STATUSES.has(approval.status) &&
       !isInboxEntityDismissed(dismissedAtByKey, `approval:${approval.id}`, approval.updatedAt),
   ).length;

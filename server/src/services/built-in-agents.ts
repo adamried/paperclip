@@ -1638,6 +1638,9 @@ export function builtInAgentService(db: Db) {
         !existingPendingApproval
         && definition.defaultManager === "single_root_agent"
         && !existing.reportsTo
+        // A Board-assigned human manager is a deliberate choice; startup
+        // reconciliation must not re-parent the agent under the root agent.
+        && !existing.reportsToUserId
       ) {
         const reportsTo = await findSingleRootManager(companyId);
         if (reportsTo) patch.reportsTo = reportsTo;

@@ -156,14 +156,6 @@ export function approvalService(db: Db) {
           if (existing.type !== "hire_agent") return;
           const payload = existing.payload as Record<string, unknown>;
           const payloadAgentId = typeof payload.agentId === "string" ? payload.agentId : null;
-          const pendingAgent = payloadAgentId ? await agentsSvc.getById(payloadAgentId) : null;
-          // Only a still-pending agent in this approval's company is activated
-          // from the payload; anything else is not this approval's to validate.
-          if (
-            !pendingAgent ||
-            pendingAgent.status !== "pending_approval" ||
-            pendingAgent.companyId !== existing.companyId
-          ) return;
           const managerPatch: { reportsTo?: string | null; reportsToUserId?: string | null } = {};
           if (Object.prototype.hasOwnProperty.call(payload, "reportsTo")) {
             managerPatch.reportsTo = typeof payload.reportsTo === "string" ? payload.reportsTo : null;
@@ -171,6 +163,21 @@ export function approvalService(db: Db) {
           if (Object.prototype.hasOwnProperty.call(payload, "reportsToUserId")) {
             managerPatch.reportsToUserId = typeof payload.reportsToUserId === "string" ? payload.reportsToUserId : null;
           }
+          if (!payloadAgentId) {
+            // The agent is created from the payload after the status flips,
+            // so its manager fields are checked here or an approval could end
+            // up approved with no agent behind it.
+            await agentsSvc.validateManagerPatch(existing.companyId, null, managerPatch);
+            return;
+          }
+          const pendingAgent = await agentsSvc.getById(payloadAgentId);
+          // Only a still-pending agent in this approval's company is activated
+          // from the payload; anything else is not this approval's to validate.
+          if (
+            !pendingAgent ||
+            pendingAgent.status !== "pending_approval" ||
+            pendingAgent.companyId !== existing.companyId
+          ) return;
           await agentsSvc.validateManagerPatch(pendingAgent.companyId, pendingAgent.id, managerPatch, pendingAgent);
         },
       );

@@ -37,7 +37,7 @@ import {
 } from "../lib/issue-filters";
 import { collectLiveIssueIds, collectSubtreeLiveCounts } from "../lib/liveIssueIds";
 import { formatAssigneeUserLabel } from "../lib/assignees";
-import { buildCompanyUserLabelMap, buildCompanyUserProfileMap } from "../lib/company-members";
+import { buildCompanyUserLabelMap, buildCompanyUserProfileMap, eligibleApprovalAddresseeIds } from "../lib/company-members";
 import {
   armIssueDetailInboxQuickArchive,
   createIssueDetailLocationState,
@@ -1308,15 +1308,19 @@ function StreamlinedInbox() {
       ),
     [heartbeatRuns, dismissedAtByKey],
   );
+  const eligibleAddresseeIds = useMemo(
+    () => eligibleApprovalAddresseeIds(companyMembers?.users),
+    [companyMembers],
+  );
   const approvalsToRender = useMemo(() => {
-    let filtered = getApprovalsForTab(approvals ?? [], tab, allApprovalFilter, currentUserId);
+    let filtered = getApprovalsForTab(approvals ?? [], tab, allApprovalFilter, currentUserId, eligibleAddresseeIds);
     if (tab === "mine") {
       filtered = filtered.filter(
         (a) => !isInboxEntityDismissed(dismissedAtByKey, `approval:${a.id}`, a.updatedAt),
       );
     }
     return filtered;
-  }, [approvals, tab, allApprovalFilter, currentUserId, dismissedAtByKey]);
+  }, [approvals, tab, allApprovalFilter, currentUserId, eligibleAddresseeIds, dismissedAtByKey]);
   const showJoinRequestsCategory =
     allCategoryFilter === "everything" || allCategoryFilter === "join_requests";
   const showTouchedCategory =

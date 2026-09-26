@@ -2045,19 +2045,24 @@ describe.sequential("agent permission routes", () => {
         : { allowed: true, reason: "allow_self", explanation: "Allowed by test." }
     ));
 
-    const app = await createApp({
-      type: "agent",
-      agentId,
-      companyId,
-      runId: "run-1",
-      source: "agent_key",
-    });
+    // The stub row makes manager-1 the acting agent's own active manager, so
+    // the own-manager rule passes and only the change-grant guard stands in
+    // the way of both bodies.
+    const app = await createApp(
+      { type: "agent", agentId, companyId, runId: "run-1", source: "agent_key" },
+      { selectRow: { reportsToUserId: "manager-1", status: "active", membershipRole: "owner" } },
+    );
 
-    for (const body of [{ reportsToUserId: "board-user" }, { reportsTo: "22222222-2222-4222-8222-222222222222" }]) {
+    for (const body of [{ reportsToUserId: "manager-1" }, { reportsTo: "22222222-2222-4222-8222-222222222222" }]) {
+      mockAccessService.decide.mockClear();
       const res = await requestApp(app, (baseUrl) => request(baseUrl)
         .patch(`/api/agents/${agentId}`)
         .send(body));
       expect(res.status).toBe(403);
+      expect(res.body.code).not.toBe("agent_manager_assignment_not_allowed");
+      expect(mockAccessService.decide).toHaveBeenCalledWith(
+        expect.objectContaining({ action: "agent_config:update", scope: expect.objectContaining({ requiresChangeGrant: true }) }),
+      );
     }
     expect(mockAgentService.update).not.toHaveBeenCalled();
   });

@@ -5,8 +5,10 @@ import { multilineTextSchema } from "./text.js";
 export const createApprovalSchema = z.object({
   type: z.enum(APPROVAL_TYPES),
   requestedByAgentId: z.string().guid().optional().nullable(),
-  // Omitted: an agent's request is addressed to its human manager, if any.
-  // Explicit null: addressed to the Board at large.
+  // Board actors: omitted or null means open to the Board at large; a user id
+  // addresses one eligible member. Agent actors: the server always addresses
+  // the request to the agent's own human manager (or nobody), and a body
+  // value naming anyone else is rejected.
   addresseeUserId: z.string().trim().min(1).optional().nullable(),
   payload: z.record(z.string(), z.unknown()),
   issueIds: z.array(z.string().guid()).optional(),
