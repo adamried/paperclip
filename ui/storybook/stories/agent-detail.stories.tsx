@@ -26,6 +26,7 @@ const agentDetailFixture: AgentDetailRecord = {
     { id: "agent-cto", name: "CTO", role: "cto", title: "CTO" },
     { id: AGENT_ID, name: "CodexCoder", role: "engineer", title: "Senior Product Engineer" },
   ],
+  chainOfCommandRoot: { kind: "board" },
   access: {
     canAssignTasks: true,
     taskAssignSource: "explicit_grant",

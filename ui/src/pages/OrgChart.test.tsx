@@ -38,20 +38,55 @@ vi.mock("../components/AgentIconPicker", () => ({
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+// The gesture tests depend on this exact two-card geometry; the Board-rooted
+// shape the API serves today is exercised separately below.
 const orgTree = [
   {
+    kind: "agent" as const,
     id: "agent-1",
     name: "CEO",
     role: "ceo",
     status: "active",
     reports: [
       {
+        kind: "agent" as const,
         id: "agent-2",
         name: "Engineer",
         role: "engineer",
         status: "active",
         reports: [],
       },
+    ],
+  },
+];
+
+const boardOrgTree = [
+  {
+    kind: "board" as const,
+    id: "board",
+    name: "The Board",
+    role: "board",
+    status: "active",
+    reports: [
+      {
+        kind: "user" as const,
+        id: "user:user-1",
+        name: "Dana Operator",
+        role: "owner",
+        status: "active",
+        image: null,
+        reports: [
+          {
+            kind: "agent" as const,
+            id: "agent-3",
+            name: "Chief of Staff",
+            role: "chief_of_staff",
+            status: "active",
+            reports: [],
+          },
+        ],
+      },
+      ...orgTree,
     ],
   },
 ];
@@ -211,6 +246,21 @@ describe("OrgChart mobile gestures", () => {
       layer: container.querySelector('[data-testid="org-chart-card-layer"]') as HTMLDivElement,
     };
   }
+
+  it("renders the Board root and human managers as non-navigating cards", async () => {
+    orgMock.mockResolvedValue(boardOrgTree);
+    await renderOrgChart();
+    const cards = Array.from(document.querySelectorAll("[data-org-card]"));
+    const kinds = cards.map((card) => card.getAttribute("data-org-node-kind"));
+    expect(kinds).toContain("board");
+    expect(kinds).toContain("user");
+    expect(document.body.textContent).toContain("The Board");
+    expect(document.body.textContent).toContain("Dana Operator");
+    expect(document.body.textContent).toContain("Manager");
+    const boardCard = cards.find((card) => card.getAttribute("data-org-node-kind") === "board") as HTMLElement;
+    boardCard.click();
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
 
   it("pans the chart with one-finger touch drag", async () => {
     const { viewport, layer } = await renderOrgChart();

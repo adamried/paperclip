@@ -22,7 +22,7 @@ Create agents from the Agents page. Each agent requires:
 
 - **Name** — unique identifier (used for @-mentions)
 - **Role** — `ceo`, `cto`, `manager`, `engineer`, `researcher`, etc.
-- **Reports to** — the agent's manager in the org tree
+- **Reports to** — the Board, a person on the Board, or another agent (see [Org Structure](./org-structure.md))
 - **Adapter type** — how the agent runs
 - **Adapter config** — runtime-specific settings (working directory, model, prompt, etc.)
 - **Capabilities** — short description of what this agent does

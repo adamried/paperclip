@@ -82,6 +82,10 @@ export const createAgentSchema = z.object({
   title: z.string().optional().nullable(),
   icon: z.enum(AGENT_ICON_NAMES).optional().nullable(),
   reportsTo: z.string().guid().optional().nullable(),
+  // A human company member as manager. The server enforces that at most one of
+  // reportsTo / reportsToUserId is set and that the user is an active,
+  // non-viewer member of the company.
+  reportsToUserId: z.string().trim().min(1).optional().nullable(),
   capabilities: z.string().optional().nullable(),
   desiredSkills: z.array(agentDesiredSkillSelectionSchema).optional(),
   adapterType: agentAdapterTypeSchema,

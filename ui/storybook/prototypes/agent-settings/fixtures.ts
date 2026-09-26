@@ -109,6 +109,7 @@ export function createSettingsFixtures(
     },
     permissions: { canCreateAgents: false, canCreateSkills: true },
     chainOfCommand: [],
+    chainOfCommandRoot: { kind: "board" },
     access: {
       canAssignTasks: true,
       taskAssignSource: "explicit_grant",

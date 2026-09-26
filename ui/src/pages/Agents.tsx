@@ -173,6 +173,12 @@ function filterOrgTree(nodes: OrgNode[], tab: FilterTab, builtInAgentIds: Set<st
   return nodes
     .reduce<OrgNode[]>((acc, node) => {
       const filteredReports = filterOrgTree(node.reports, tab, builtInAgentIds);
+      // The Board and people are containers: they stay only while something
+      // under them matches, and are never filtered by agent status.
+      if (node.kind === "board" || node.kind === "user") {
+        if (filteredReports.length > 0) acc.push({ ...node, reports: filteredReports });
+        return acc;
+      }
       // Hidden agents (terminated / pending_approval) never render as a row, but
       // any visible reports are promoted so the tree doesn't lose live agents.
       if (HIDDEN_AGENT_STATUSES.has(node.status)) {

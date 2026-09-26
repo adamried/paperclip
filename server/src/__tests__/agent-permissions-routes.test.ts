@@ -52,6 +52,7 @@ const mockAgentService = vi.hoisted(() => ({
   rollbackConfigRevision: vi.fn(),
   updatePermissions: vi.fn(),
   getChainOfCommand: vi.fn(),
+  getChainOfCommandRoot: vi.fn(async () => ({ kind: "board" })),
   resolveByReference: vi.fn(),
 }));
 

@@ -77,6 +77,40 @@ export interface AgentChainOfCommandEntry {
   title: string | null;
 }
 
+/**
+ * Who the top of an agent's reporting chain answers to. `chainOfCommand`
+ * stays agents-only so agents can keep treating its ids as agent ids; the
+ * root says whether that chain ends at the Board or at a person.
+ */
+export type ChainOfCommandRoot =
+  | { kind: "board" }
+  | {
+      kind: "user";
+      id: string;
+      name: string | null;
+      email: string | null;
+      image: string | null;
+      /** False when the person is no longer an active non-viewer member. */
+      active: boolean;
+    };
+
+export type OrgTreeNodeKind = "board" | "user" | "agent";
+
+/**
+ * One node of the org chart. The Board is always the single root; people who
+ * manage agents sit directly under it; agents hang under their manager.
+ * User node ids are prefixed `user:`; the Board node id is `board`.
+ */
+export interface OrgTreeNode {
+  kind: OrgTreeNodeKind;
+  id: string;
+  name: string;
+  role: string;
+  status: string;
+  image?: string | null;
+  reports: OrgTreeNode[];
+}
+
 export interface Agent {
   id: string;
   companyId: string;
@@ -87,6 +121,8 @@ export interface Agent {
   icon: string | null;
   status: AgentStatus;
   reportsTo: string | null;
+  /** Human manager; mutually exclusive with reportsTo. Always emitted by the server. */
+  reportsToUserId?: string | null;
   capabilities: string | null;
   adapterType: AgentAdapterType;
   adapterConfig: Record<string, unknown>;
@@ -107,6 +143,7 @@ export interface Agent {
 
 export interface AgentDetail extends Agent {
   chainOfCommand: AgentChainOfCommandEntry[];
+  chainOfCommandRoot: ChainOfCommandRoot;
   access: AgentAccessState;
 }
 

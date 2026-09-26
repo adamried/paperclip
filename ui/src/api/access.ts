@@ -149,6 +149,8 @@ export type CompanyMembersResponse = {
 export type CompanyUserDirectoryEntry = {
   principalId: string;
   status: "active";
+  /** Absent on older servers; viewers cannot manage agents. */
+  membershipRole?: HumanCompanyRole | null;
   user: { id: string; email: string | null; name: string | null; image: string | null } | null;
 };
 

@@ -23,6 +23,11 @@ export const agents = pgTable(
     icon: text("icon"),
     status: text("status").notNull().default("idle"),
     reportsTo: uuid("reports_to").references((): AnyPgColumn => agents.id),
+    // A human company member this agent reports to instead of an agent. Bare
+    // text like companies.default_responsible_user_id: local mode's implicit
+    // board user may have no auth row. Mutually exclusive with reports_to; both
+    // null means the agent reports to the Board.
+    reportsToUserId: text("reports_to_user_id"),
     capabilities: text("capabilities"),
     adapterType: text("adapter_type").notNull().default("process"),
     adapterConfig: jsonb("adapter_config").$type<Record<string, unknown>>().notNull().default({}),
@@ -43,6 +48,7 @@ export const agents = pgTable(
     companyIdUq: unique("agents_company_id_uq").on(table.companyId, table.id),
     companyStatusIdx: index("agents_company_status_idx").on(table.companyId, table.status),
     companyReportsToIdx: index("agents_company_reports_to_idx").on(table.companyId, table.reportsTo),
+    companyReportsToUserIdx: index("agents_company_reports_to_user_idx").on(table.companyId, table.reportsToUserId),
     companyDefaultEnvironmentIdx: index("agents_company_default_environment_idx").on(table.companyId, table.defaultEnvironmentId),
   }),
 );

@@ -81,7 +81,7 @@ paperclipai company export abc123 --out ./skills-only --include skills --skills 
 - Skill packages (as references or vendored content)
 - Adapter type and env input declarations in `.paperclip.yaml`
 
-Secret values, machine-local paths, and database IDs are **never** exported.
+Secret values, machine-local paths, and database IDs are **never** exported. Links from an agent to a **person** who manages it are not exported either; an imported agent reports to the Board, and the import warns when the package named a person.
 
 ## Importing a Company
 

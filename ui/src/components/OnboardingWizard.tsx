@@ -129,7 +129,26 @@ import { ModelSourceTiles, type CredentialMode } from "./onboarding/ModelSourceT
 import { CredentialModeLink } from "./onboarding/CredentialModeLink";
 import { FooterNav, type FooterPrimaryIcon } from "./onboarding/FooterNav";
 import { OnboardingHeading } from "./onboarding/OnboardingPrimitives";
-import { DEFAULT_AGENT_ROLE } from "../lib/onboarding-agent-role";
+import {
+  DEFAULT_AGENT_ROLE,
+  firstAgentRoleForMode,
+  type FirstAgentMode,
+} from "../lib/onboarding-agent-role";
+import { RadioCardGroup, type RadioCardOption } from "./ui/radio-card";
+import { authApi } from "../api/auth";
+
+const FIRST_AGENT_MODE_OPTIONS: RadioCardOption[] = [
+  {
+    value: "ai_ceo",
+    title: "An AI CEO runs it day to day",
+    description: "You set direction and approve what matters. The CEO hires and manages the rest of the team.",
+  },
+  {
+    value: "board_run",
+    title: "I run it; hire my first helper",
+    description: "Your first agent is a chief of staff who reports directly to you. No AI CEO in between.",
+  },
+];
 import { capsuleHeroMotion } from "./onboarding/onboarding-motion";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -481,6 +500,13 @@ function OnboardingWizardInner({
   } = useDialog();
   const { companies, setSelectedCompanyId, loading: companiesLoading } = useCompany();
   const queryClient = useQueryClient();
+  // The person setting up the organization; the "I run it" first hire reports
+  // to them. Local mode's implicit board session resolves to no user here.
+  const { data: session } = useQuery({
+    queryKey: queryKeys.auth.session,
+    queryFn: () => authApi.getSession(),
+  });
+  const currentUserId = session?.user.id ?? session?.session.userId ?? null;
   const navigate = useNavigate();
   const location = useLocation();
   const { companyPrefix: matchedCompanyPrefix } = useParams<{ companyPrefix?: string }>();
@@ -556,8 +582,14 @@ function OnboardingWizardInner({
   // on the customer's behalf that they then have to notice and undo. It is the
   // step's only question, and its CTA gates on it.
   const [agentName, setAgentName] = useState((saved?.agentName as string) ?? "");
-  // Defaults to `general` rather than empty. The arc stopped asking for a role
-  // — a customer naming their first agent is describing what it does, not
+  // Who runs the company day to day: an AI CEO (the default) or the customer
+  // themselves, in which case the first hire is a chief of staff reporting to
+  // them. The role follows the mode; the customer never picks a role here.
+  const [firstAgentMode, setFirstAgentMode] = useState<FirstAgentMode>(
+    saved?.firstAgentMode === "board_run" ? "board_run" : "ai_ceo",
+  );
+  // Defaults to the CEO role rather than empty. The arc stopped asking for a
+  // role — a customer naming their first agent is describing what it does, not
   // filing it — but the hire still needs one, and the guard below returns
   // silently when it is missing. An unset role there would mean Connect
   // appearing to work and hiring nobody.
@@ -879,7 +911,7 @@ function OnboardingWizardInner({
     if (!effectiveOnboardingOpen) return;
     const state = {
       step, companyName,
-      agentName, agentRole, adapterType, cwd, model, command, args, url,
+      agentName, agentRole, firstAgentMode, adapterType, cwd, model, command, args, url,
       // The mode, never the key: this blob is localStorage.
       credentialMode, credentialModeChoice,
       createdCompanyId, createdCompanyPrefix, createdAgentId,
@@ -888,7 +920,7 @@ function OnboardingWizardInner({
     onboardingDraftStorage.write(JSON.stringify(state));
   }, [
     effectiveOnboardingOpen, step, companyName,
-    agentName, agentRole, adapterType, cwd, model, command, args, url,
+    agentName, agentRole, firstAgentMode, adapterType, cwd, model, command, args, url,
     credentialMode, credentialModeChoice,
     createdCompanyId, createdCompanyPrefix, createdAgentId,
     createdCompanyGoalId, createdProjectId, createdIssueRef,
@@ -1597,9 +1629,10 @@ function OnboardingWizardInner({
     setLoading(false);
     setError(null);
     setCompanyName("");
-    // Back to the mount defaults: an empty name (the step's only question, and
-    // what its CTA gates on) and the neutral role every onboarding hire uses.
+    // Back to the mount defaults: an empty name (what the step's CTA gates on)
+    // and the AI-CEO mode with its CEO role.
     setAgentName("");
+    setFirstAgentMode("ai_ceo");
     setAgentRole(DEFAULT_AGENT_ROLE);
     setAdapterType("claude_local");
     setModel("");
@@ -2172,6 +2205,9 @@ function OnboardingWizardInner({
         // named for the job it was hired to do rather than left blank.
         name: hireName,
         role: agentRole,
+        // "I run it": the helper reports to the person setting up the
+        // organization. Local mode's implicit board user has no session id.
+        ...(firstAgentMode === "board_run" ? { reportsToUserId: currentUserId ?? "local-board" } : {}),
         adapterType,
         adapterConfig: hireAdapterConfig,
         ...(shouldApplyStoredClaudeLogin ? { applyStoredClaudeLogin: true } : {}),
@@ -2504,21 +2540,22 @@ function OnboardingWizardInner({
                       center
                       title={
                         step === 3
-                          ? "Hire your CEO"
+                          ? "Hire your first agent"
                           : step === 4
                             ? "Connect a model"
                             : "Let's get started..."
                       }
-                      // The agent step carries no lede, as the prototype has it:
-                      // the capsule and the heading say what this is, and a
-                      // sentence restating it only pushes the fields down.
                       lede={
                         step === 3 ? (
-                          <>You are the Board. Your first job is to hire a CEO to run {companyName.trim() || "your organization"} day to day; you set direction and approve what matters.</>
+                          firstAgentMode === "board_run" ? (
+                            <>You are the Board and you run {companyName.trim() || "your organization"} day to day. Your first hire is a chief of staff who reports to you.</>
+                          ) : (
+                            <>You are the Board. Your first job is to hire a CEO to run {companyName.trim() || "your organization"} day to day; you set direction and approve what matters.</>
+                          )
                         ) : step === 4 ? (
                           <>Paperclip works with your subscription or API keys.</>
                         ) : (
-                          <>{agentName.trim() || "Your CEO"} is ready to work!</>
+                          <>{agentName.trim() || `Your ${AGENT_ROLE_LABELS[agentRole]}`} is ready to work!</>
                         )
                       }
                     />
@@ -2574,14 +2611,22 @@ function OnboardingWizardInner({
                 </div>
               )}
 
-              {/* Step 3: the name, and only the name. The role picker went with
-                  the question it was asking — a customer naming their first
-                  agent is describing what it does, and the placeholder carries
-                  the range of answers that fit. Hiring uses the neutral
-                  `general` role; a specific one can be set later, where there
-                  is context to choose it in. */}
+              {/* Step 3: who runs the company, and the agent's name. There is
+                  no role picker — the mode decides the role (an AI CEO, or a
+                  chief of staff reporting to the customer) and a specific role
+                  can be set later, where there is context to choose it in. */}
               {step === 3 && (
                 <div className="mx-auto flex w-full flex-col gap-9">
+                  <RadioCardGroup
+                    ariaLabel="Who runs the organization day to day"
+                    value={firstAgentMode}
+                    onValueChange={(value) => {
+                      const mode: FirstAgentMode = value === "board_run" ? "board_run" : "ai_ceo";
+                      setFirstAgentMode(mode);
+                      setAgentRole(firstAgentRoleForMode(mode));
+                    }}
+                    options={FIRST_AGENT_MODE_OPTIONS}
+                  />
                   <div className="flex flex-col gap-2">
                     <Label htmlFor="onboarding-agent-name">Agent name</Label>
                     {/*

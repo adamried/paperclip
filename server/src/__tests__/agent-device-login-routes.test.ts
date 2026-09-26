@@ -53,6 +53,7 @@ const CREDENTIAL_BYTES = '{"tokens":{"access":"SECRET-ACCESS-TOKEN"}}';
 const mockAgentService = vi.hoisted(() => ({
   getById: vi.fn(),
   getChainOfCommand: vi.fn(async () => []),
+  getChainOfCommandRoot: vi.fn(async () => ({ kind: "board" })),
 }));
 
 const mockAccessService = vi.hoisted(() => ({

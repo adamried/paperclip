@@ -155,7 +155,14 @@ import {
   NativeRuntimeRequestResolutionError,
   resolveNativeRuntimeRequest,
 } from "../services/native-runtime/native-session-executor.js";
-import { renderOrgChartSvg, renderOrgChartPng, type OrgNode, type OrgChartStyle, ORG_CHART_STYLES } from "./org-chart-svg.js";
+import { renderOrgChartSvg, renderOrgChartPng, type OrgChartStyle, ORG_CHART_STYLES } from "./org-chart-svg.js";
+import {
+  buildOrgChartTree,
+  orgChartManagerUserIds,
+  type OrgChartAgentNode,
+} from "../services/org-chart-tree.js";
+import { loadOrgChartUserSummaries } from "../services/agent-manager.js";
+import type { OrgTreeNode } from "@paperclipai/shared";
 import {
   instanceSettingsService,
   isTruthyRuntimeEnvValue,
@@ -1627,8 +1634,9 @@ export function agentRoutes(
     agent: NonNullable<Awaited<ReturnType<typeof svc.getById>>>,
     options?: { restricted?: boolean },
   ) {
-    const [chainOfCommand, accessState] = await Promise.all([
+    const [chainOfCommand, chainOfCommandRoot, accessState] = await Promise.all([
       svc.getChainOfCommand(agent.id),
+      svc.getChainOfCommandRoot(agent.id),
       buildAgentAccessState(agent),
     ]);
 
@@ -1639,6 +1647,7 @@ export function agentRoutes(
     return {
       ...baseAgent,
       chainOfCommand,
+      chainOfCommandRoot,
       access: accessState,
     };
   }
@@ -3129,6 +3138,7 @@ export function agentRoutes(
       title: agent.title,
       status: agent.status,
       reportsTo: agent.reportsTo,
+      reportsToUserId: agent.reportsToUserId ?? null,
       adapterType: agent.adapterType,
       adapterConfig: redactAgentAdapterConfig(agent.adapterConfig),
       runtimeConfig: redactEventPayload(agent.runtimeConfig),
@@ -3191,7 +3201,7 @@ export function agentRoutes(
     };
   }
 
-  function toLeanOrgNode(node: Record<string, unknown>): Record<string, unknown> {
+  function toLeanOrgNode(node: Record<string, unknown>): OrgChartAgentNode {
     const reports = Array.isArray(node.reports)
       ? (node.reports as Array<Record<string, unknown>>).map((report) => toLeanOrgNode(report))
       : [];
@@ -3200,8 +3210,20 @@ export function agentRoutes(
       name: String(node.name),
       role: String(node.role),
       status: String(node.status),
+      reportsToUserId: typeof node.reportsToUserId === "string" ? node.reportsToUserId : null,
       reports,
     };
+  }
+
+  /**
+   * The actor-visible agent forest wrapped under the Board root, with the
+   * people who manage root agents as intermediate nodes.
+   */
+  async function loadOrgChartTree(req: Request, companyId: string): Promise<OrgTreeNode[]> {
+    const forest = await filterAgentsForActor(req, await svc.orgForCompany(companyId), companyId);
+    const lean = forest.map((node) => toLeanOrgNode(node as Record<string, unknown>));
+    const users = await loadOrgChartUserSummaries(db, companyId, orgChartManagerUserIds(lean));
+    return buildOrgChartTree(lean, users);
   }
 
   router.param("id", async (req, _res, next, rawId) => {
@@ -4098,18 +4120,14 @@ export function agentRoutes(
   router.get("/companies/:companyId/org", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
-    const tree = await filterAgentsForActor(req, await svc.orgForCompany(companyId), companyId);
-    const leanTree = tree.map((node) => toLeanOrgNode(node as Record<string, unknown>));
-    res.json(leanTree);
+    res.json(await loadOrgChartTree(req, companyId));
   });
 
   router.get("/companies/:companyId/org.svg", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
     const style = (ORG_CHART_STYLES.includes(req.query.style as OrgChartStyle) ? req.query.style : "warmth") as OrgChartStyle;
-    const tree = await filterAgentsForActor(req, await svc.orgForCompany(companyId), companyId);
-    const leanTree = tree.map((node) => toLeanOrgNode(node as Record<string, unknown>));
-    const svg = renderOrgChartSvg(leanTree as unknown as OrgNode[], style);
+    const svg = renderOrgChartSvg(await loadOrgChartTree(req, companyId), style);
     res.setHeader("Content-Type", "image/svg+xml");
     res.setHeader("Cache-Control", "no-cache");
     res.send(svg);
@@ -4119,9 +4137,7 @@ export function agentRoutes(
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
     const style = (ORG_CHART_STYLES.includes(req.query.style as OrgChartStyle) ? req.query.style : "warmth") as OrgChartStyle;
-    const tree = await filterAgentsForActor(req, await svc.orgForCompany(companyId), companyId);
-    const leanTree = tree.map((node) => toLeanOrgNode(node as Record<string, unknown>));
-    const png = await renderOrgChartPng(leanTree as unknown as OrgNode[], style);
+    const png = await renderOrgChartPng(await loadOrgChartTree(req, companyId), style);
     res.setHeader("Content-Type", "image/png");
     res.setHeader("Cache-Control", "no-cache");
     res.send(png);
@@ -4640,6 +4656,7 @@ export function agentRoutes(
             title: normalizedHireInput.title ?? null,
             icon: normalizedHireInput.icon ?? null,
             reportsTo: normalizedHireInput.reportsTo ?? null,
+            reportsToUserId: normalizedHireInput.reportsToUserId ?? null,
             capabilities: normalizedHireInput.capabilities ?? null,
             adapterType: requestedAdapterType,
             adapterConfig: requestedAdapterConfig,

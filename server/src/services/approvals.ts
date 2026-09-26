@@ -163,6 +163,7 @@ export function approvalService(db: Db) {
             role: String(payload.role ?? "general"),
             title: typeof payload.title === "string" ? payload.title : null,
             reportsTo: typeof payload.reportsTo === "string" ? payload.reportsTo : null,
+            reportsToUserId: typeof payload.reportsToUserId === "string" ? payload.reportsToUserId : null,
             capabilities: typeof payload.capabilities === "string" ? payload.capabilities : null,
             adapterType: String(payload.adapterType ?? "process"),
             adapterConfig:

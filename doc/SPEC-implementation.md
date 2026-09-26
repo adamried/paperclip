@@ -157,6 +157,7 @@ Invariant: every business record belongs to exactly one company.
 - `icon` text null
 - `status` enum: `active | paused | idle | running | error | pending_approval | terminated`
 - `reports_to` uuid fk `agents.id` null
+- `reports_to_user_id` text null; a human company member as manager (see 9.12)
 - `capabilities` text null
 - `adapter_type` text; built-ins include `process`, `http`, `claude_local`, `codex_local`, `gemini_local`, `opencode_local`, `pi_local`, `cursor`, `hermes_local`, `hermes_gateway`, and `openclaw_gateway`
 - `adapter_config` jsonb not null
@@ -173,6 +174,8 @@ Invariant: every business record belongs to exactly one company.
 Invariants:
 
 - agent and manager must be in same company
+- at most one of `reports_to` / `reports_to_user_id` is set; both null means the agent reports to the Board
+- `reports_to_user_id` must be an active owner, admin, or operator member of the company when set
 - no cycles in reporting tree
 - `terminated` agents cannot be resumed
 
@@ -983,6 +986,42 @@ Ownership split:
 
 - **Core / Free:** permission key and scoped-grant enforcement; responsible-user resolution; default-open, disabled, and allowlist policy modes; archive/unarchive APIs; per-user archive persistence; resurfacing behavior; activity audit records; and stable denial codes.
 - **Paperclip EE / Enterprise:** centralized policy administration beyond the per-user controls, organization-wide presets, policy simulation, bulk inbox operations, advanced compliance reporting, and richer administrative audit UX. EE may extend policy management surfaces but must not weaken core company boundaries, user policy restrictions, scoped grants, or audit requirements.
+
+## 9.12 The Board, Human Managers, and the Org Chart
+
+The org tree has one root: the Board. An agent reports to exactly one of an
+agent (`reports_to`), a person (`reports_to_user_id`), or the Board (both null).
+Setting one manager clears the other. A person can manage agents only while
+they are an active owner, admin, or operator member of the company; viewers are
+read-only and are refused with `422 agent_manager_not_eligible`. Setting both
+returns `422 agent_manager_conflict`.
+
+A company does not need a `ceo`-role agent. Root agents managed by people are
+valid, and the join-request approval path roots a joined agent under the Board
+when no CEO exists.
+
+Reads:
+
+- `GET /api/companies/:companyId/org` returns a single `kind: "board"` root
+  (`id: "board"`), with `kind: "user"` nodes (`id: "user:<userId>"`) for the
+  people who manage root agents and `kind: "agent"` nodes under their manager.
+  An empty company returns `[]`. The SVG and PNG exports render the same tree.
+- `GET /api/agents/:agentId` includes `chainOfCommandRoot`: `{ kind: "board" }`
+  or `{ kind: "user", id, name, email, image, active }`. `chainOfCommand` stays
+  agents-only so agents can keep treating its ids as agent ids.
+
+A suspended or downgraded manager is kept on the agent and flagged
+(`active: false`, org node `status: "inactive"`); it is not silently re-rooted.
+Company export never writes human manager ids; an import that carries one warns
+and leaves the agent reporting to the Board.
+
+Onboarding offers two first hires: an AI CEO (role `ceo`, reports to the
+Board) or, when the customer runs the company, a `chief_of_staff` that reports
+to the onboarding user. The server gives a non-CEO first hire the
+chief-of-staff onboarding persona.
+
+Escalation routing, default responsible user, and approval addressing for
+human-managed agents are specified separately once implemented.
 
 ## 10. API Contract (REST)
 

@@ -1349,7 +1349,7 @@ Terminal states: `done`, `cancelled`
 | POST   | `/api/agents/:agentId/terminate`   | Permanently deactivate agent (irreversible) |
 | POST   | `/api/agents/:agentId/keys`        | Create long-lived API key (full value shown once) |
 | POST   | `/api/agents/:agentId/heartbeat/invoke` | Manually trigger a heartbeat    |
-| GET    | `/api/companies/:companyId/org`    | Org chart tree                       |
+| GET    | `/api/companies/:companyId/org`    | Org chart tree: one `kind: "board"` root, `kind: "user"` managers, `kind: "agent"` nodes |
 | GET    | `/api/companies/:companyId/adapters/:adapterType/models` | List selectable models for an adapter type |
 | PATCH  | `/api/agents/:agentId/instructions-path` | Set/clear instructions path (`AGENTS.md`) |
 | GET    | `/api/agents/:agentId/config-revisions` | List config revisions            |
