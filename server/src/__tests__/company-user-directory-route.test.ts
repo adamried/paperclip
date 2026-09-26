@@ -26,8 +26,8 @@ vi.mock("../services/index.js", () => ({
 
 function createDbStub() {
   const activeMemberships = [
-    { principalId: "user-2", status: "active" as const },
-    { principalId: "user-1", status: "active" as const },
+    { principalId: "user-2", status: "active" as const, membershipRole: "viewer" },
+    { principalId: "user-1", status: "active" as const, membershipRole: "operator" },
   ];
   const users = [
     { id: "user-1", name: "Dotta", email: "dotta@example.com", image: "https://example.com/dotta.png" },
@@ -119,11 +119,13 @@ describe("GET /companies/:companyId/user-directory", () => {
         {
           principalId: "user-2",
           status: "active",
+          membershipRole: "viewer",
           user: { id: "user-2", name: null, email: "alex@example.com", image: null },
         },
         {
           principalId: "user-1",
           status: "active",
+          membershipRole: "operator",
           user: { id: "user-1", name: "Dotta", email: "dotta@example.com", image: "https://example.com/dotta.png" },
         },
       ],

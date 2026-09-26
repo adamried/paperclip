@@ -58,6 +58,34 @@ export async function findHumanManagerMembership(
   return rows[0] ?? null;
 }
 
+/** Batch form of {@link findHumanManagerMembership}: one query for many people. */
+export async function findHumanManagerMemberships(
+  db: Db,
+  companyId: string,
+  userIds: readonly string[],
+): Promise<Map<string, HumanManagerMembership>> {
+  const result = new Map<string, HumanManagerMembership>();
+  if (userIds.length === 0) return result;
+  const rows = await db
+    .select({
+      principalId: companyMemberships.principalId,
+      status: companyMemberships.status,
+      membershipRole: companyMemberships.membershipRole,
+    })
+    .from(companyMemberships)
+    .where(
+      and(
+        eq(companyMemberships.companyId, companyId),
+        eq(companyMemberships.principalType, "user"),
+        inArray(companyMemberships.principalId, [...userIds]),
+      ),
+    );
+  for (const row of rows) {
+    result.set(row.principalId, { status: row.status, membershipRole: row.membershipRole });
+  }
+  return result;
+}
+
 export async function assertHumanManagerEligible(db: Db, companyId: string, userId: string) {
   const membership = await findHumanManagerMembership(db, companyId, userId);
   if (!humanManagerMembershipIsActive(membership)) {
@@ -172,27 +200,13 @@ export async function loadOrgChartUserSummaries(
 ): Promise<Map<string, OrgChartUserSummary>> {
   const result = new Map<string, OrgChartUserSummary>();
   if (userIds.length === 0) return result;
-  const [memberships, users] = await Promise.all([
-    db
-      .select({
-        principalId: companyMemberships.principalId,
-        status: companyMemberships.status,
-        membershipRole: companyMemberships.membershipRole,
-      })
-      .from(companyMemberships)
-      .where(
-        and(
-          eq(companyMemberships.companyId, companyId),
-          eq(companyMemberships.principalType, "user"),
-          inArray(companyMemberships.principalId, userIds),
-        ),
-      ),
+  const [membershipById, users] = await Promise.all([
+    findHumanManagerMemberships(db, companyId, userIds),
     db
       .select({ id: authUsers.id, name: authUsers.name, email: authUsers.email, image: authUsers.image })
       .from(authUsers)
       .where(inArray(authUsers.id, userIds)),
   ]);
-  const membershipById = new Map(memberships.map((row) => [row.principalId, row]));
   const userById = new Map(users.map((row) => [row.id, row]));
   for (const userId of userIds) {
     const membership = membershipById.get(userId) ?? null;

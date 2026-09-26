@@ -1637,9 +1637,8 @@ export function agentRoutes(
     agent: NonNullable<Awaited<ReturnType<typeof svc.getById>>>,
     options?: { restricted?: boolean },
   ) {
-    const [chainOfCommand, chainOfCommandRoot, accessState] = await Promise.all([
-      svc.getChainOfCommand(agent.id),
-      svc.getChainOfCommandRoot(agent.id),
+    const [{ chainOfCommand, chainOfCommandRoot }, accessState] = await Promise.all([
+      svc.getChainOfCommandWithRoot(agent.id),
       buildAgentAccessState(agent),
     ]);
 

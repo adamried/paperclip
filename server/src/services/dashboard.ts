@@ -1,5 +1,5 @@
 import { and, eq, gte, sql } from "drizzle-orm";
-import { loadOrgChartUserSummaries } from "./agent-manager.js";
+import { filterApprovalsVisibleTo } from "./approval-decision-policy.js";
 import type { Db } from "@paperclipai/db";
 import { agents, approvals, companies, costEvents, heartbeatRuns, issues } from "@paperclipai/db";
 import { notFound } from "../errors.js";
@@ -56,12 +56,7 @@ export function dashboardService(db: Db) {
         // unless the addressee is no longer an active member.
         .then(async (rows) => {
           if (viewerUserId === undefined) return rows.length;
-          const addresseeIds = [...new Set(rows.map((row) => row.addresseeUserId).filter((id): id is string => Boolean(id)))];
-          const addressees = await loadOrgChartUserSummaries(db, companyId, addresseeIds);
-          return rows.filter((row) =>
-            row.addresseeUserId === null
-            || row.addresseeUserId === viewerUserId
-            || addressees.get(row.addresseeUserId)?.active === false).length;
+          return (await filterApprovalsVisibleTo(db, companyId, rows, viewerUserId)).length;
         });
 
       const agentCounts: Record<string, number> = {

@@ -898,6 +898,28 @@ export function agentService(db: Db) {
     return transaction.call(db, async (tx) => applyUpdate(tx as unknown as Db));
   }
 
+  /**
+   * Walks the agent-manager chain above an agent: the managers in order, and
+   * the top agent of the chain (the agent itself when it has no agent
+   * manager), whose `reportsToUserId` says who the whole chain answers to.
+   */
+  async function walkChainOfCommand(agentId: string) {
+    const chain: { id: string; name: string; role: string; title: string | null }[] = [];
+    const visited = new Set<string>([agentId]);
+    const start = await getById(agentId);
+    let top = start;
+    let currentId = start?.reportsTo ?? null;
+    while (currentId && !visited.has(currentId) && chain.length < 50) {
+      visited.add(currentId);
+      const mgr = await getById(currentId);
+      if (!mgr) break;
+      chain.push({ id: mgr.id, name: mgr.name, role: mgr.role, title: mgr.title ?? null });
+      top = mgr;
+      currentId = mgr.reportsTo ?? null;
+    }
+    return { chain, top };
+  }
+
   return {
     list: async (companyId: string, options?: { includeTerminated?: boolean }) => {
       const conditions = [eq(agents.companyId, companyId)];
@@ -1386,37 +1408,18 @@ export function agentService(db: Db) {
       return build(null);
     },
 
-    getChainOfCommand: async (agentId: string) => {
-      const chain: { id: string; name: string; role: string; title: string | null }[] = [];
-      const visited = new Set<string>([agentId]);
-      const start = await getById(agentId);
-      let currentId = start?.reportsTo ?? null;
-      while (currentId && !visited.has(currentId) && chain.length < 50) {
-        visited.add(currentId);
-        const mgr = await getById(currentId);
-        if (!mgr) break;
-        chain.push({ id: mgr.id, name: mgr.name, role: mgr.role, title: mgr.title ?? null });
-        currentId = mgr.reportsTo ?? null;
-      }
-      return chain;
-    },
+    getChainOfCommand: async (agentId: string) => (await walkChainOfCommand(agentId)).chain,
 
     /** Validates and normalizes reportsTo / reportsToUserId on a patch in place. */
     validateManagerPatch: applyManagerExclusivity,
 
-    getChainOfCommandRoot: async (agentId: string): Promise<ChainOfCommandRoot> => {
-      // Walk to the top agent of the chain (the agent itself when it has no
-      // agent manager), then ask who that top agent answers to.
-      const visited = new Set<string>();
-      let top = await getById(agentId);
-      while (top?.reportsTo && !visited.has(top.reportsTo) && visited.size < 50) {
-        visited.add(top.reportsTo);
-        const mgr = await getById(top.reportsTo);
-        if (!mgr) break;
-        top = mgr;
-      }
-      if (!top) return { kind: "board" };
-      return loadChainOfCommandRoot(db, top.companyId, top.reportsToUserId ?? null);
+    /** The chain of agent managers plus who its top answers to, from one walk. */
+    getChainOfCommandWithRoot: async (agentId: string) => {
+      const { chain, top } = await walkChainOfCommand(agentId);
+      const chainOfCommandRoot: ChainOfCommandRoot = top
+        ? await loadChainOfCommandRoot(db, top.companyId, top.reportsToUserId ?? null)
+        : { kind: "board" };
+      return { chainOfCommand: chain, chainOfCommandRoot };
     },
 
     runningForAgent: (agentId: string) =>

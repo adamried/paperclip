@@ -2,7 +2,11 @@ import { and, eq } from "drizzle-orm";
 import { authUsers, userApprovalDecisionPolicies, type Db } from "@paperclipai/db";
 import type { ApprovalDecisionPolicy, UpdateApprovalDecisionPolicy } from "@paperclipai/shared";
 import { forbidden } from "../errors.js";
-import { findHumanManagerMembership, humanManagerMembershipIsActive } from "./agent-manager.js";
+import {
+  findHumanManagerMembership,
+  findHumanManagerMemberships,
+  humanManagerMembershipIsActive,
+} from "./agent-manager.js";
 
 /**
  * The single gate every approval decision path (web routes, the pending-agent
@@ -42,14 +46,28 @@ export async function assertApprovalDecisionAllowed(
   );
 }
 
-/** True when the addressee still binds routing: present, active, and not a viewer. */
-export async function approvalAddresseeIsActive(
+/**
+ * The approvals a person may treat as theirs to decide: unaddressed ones,
+ * ones addressed to them, and ones whose addressee no longer binds routing
+ * (left, suspended, or downgraded to viewer), which reopen to the Board. The
+ * inbox feed, dashboard counts, and sidebar badge share this rule; the
+ * Approvals page still lists everything. `ui/src/lib/inbox.ts` mirrors it.
+ */
+export async function filterApprovalsVisibleTo<T extends { addresseeUserId: string | null }>(
   db: Db,
   companyId: string,
-  addresseeUserId: string | null,
-): Promise<boolean> {
-  if (!addresseeUserId) return false;
-  return humanManagerMembershipIsActive(await findHumanManagerMembership(db, companyId, addresseeUserId));
+  rows: readonly T[],
+  viewerUserId: string | null | undefined,
+): Promise<T[]> {
+  const viewer = viewerUserId ?? null;
+  const otherAddresseeIds = [
+    ...new Set(rows.map((row) => row.addresseeUserId).filter((id): id is string => Boolean(id) && id !== viewer)),
+  ];
+  const memberships = await findHumanManagerMemberships(db, companyId, otherAddresseeIds);
+  return rows.filter((row) =>
+    row.addresseeUserId === null
+    || row.addresseeUserId === viewer
+    || !humanManagerMembershipIsActive(memberships.get(row.addresseeUserId)));
 }
 
 /**

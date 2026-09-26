@@ -2,7 +2,7 @@ import { Router, type Request } from "express";
 import { eq } from "drizzle-orm";
 import { heartbeatRuns, type Db } from "@paperclipai/db";
 import { assertAgentMayAssignManager, assertHumanManagerEligible, resolveActiveAgentManagerUserId } from "../services/agent-manager.js";
-import { assertApprovalDecisionAllowed as assertApprovalDecisionAllowedForApproval } from "../services/approval-decision-policy.js";
+import { assertApprovalDecisionAllowed } from "../services/approval-decision-policy.js";
 import { unprocessable } from "../errors.js";
 import {
   addApprovalCommentSchema,
@@ -240,13 +240,6 @@ export function approvalRoutes(
     return requested;
   }
 
-  /** Route-side wrapper over the shared decision gate (see approval-decision-policy.ts). */
-  async function assertApprovalDecisionAllowed(req: Request, approvalId: string) {
-    const approval = await svc.getById(approvalId);
-    if (!approval) return;
-    await assertApprovalDecisionAllowedForApproval(db, approval, req.actor.userId ?? null);
-  }
-
   router.get("/companies/:companyId/approvals", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
@@ -342,11 +335,12 @@ export function approvalRoutes(
   router.post("/approvals/:id/approve", validate(resolveApprovalSchema), async (req, res) => {
     assertBoard(req);
     const id = req.params.id as string;
-    if (!(await requireApprovalAccess(req, id))) {
+    const existing = await requireApprovalAccess(req, id);
+    if (!existing) {
       res.status(404).json({ error: "Approval not found" });
       return;
     }
-    await assertApprovalDecisionAllowed(req, id);
+    await assertApprovalDecisionAllowed(db, existing, req.actor.userId ?? null);
     const decidedByUserId = req.actor.userId ?? "board";
     const { approval, applied } = await svc.approve(id, decidedByUserId, req.body.decisionNote);
 
@@ -459,11 +453,12 @@ export function approvalRoutes(
   router.post("/approvals/:id/reject", validate(resolveApprovalSchema), async (req, res) => {
     assertBoard(req);
     const id = req.params.id as string;
-    if (!(await requireApprovalAccess(req, id))) {
+    const existing = await requireApprovalAccess(req, id);
+    if (!existing) {
       res.status(404).json({ error: "Approval not found" });
       return;
     }
-    await assertApprovalDecisionAllowed(req, id);
+    await assertApprovalDecisionAllowed(db, existing, req.actor.userId ?? null);
     const decidedByUserId = req.actor.userId ?? "board";
     const { approval, applied } = await svc.reject(id, decidedByUserId, req.body.decisionNote);
 
@@ -498,11 +493,12 @@ export function approvalRoutes(
     async (req, res) => {
       assertBoard(req);
       const id = req.params.id as string;
-      if (!(await requireApprovalAccess(req, id))) {
+      const existing = await requireApprovalAccess(req, id);
+      if (!existing) {
         res.status(404).json({ error: "Approval not found" });
         return;
       }
-      await assertApprovalDecisionAllowed(req, id);
+      await assertApprovalDecisionAllowed(db, existing, req.actor.userId ?? null);
       const decidedByUserId = req.actor.userId ?? "board";
       const approval = await svc.requestRevision(id, decidedByUserId, req.body.decisionNote);
 

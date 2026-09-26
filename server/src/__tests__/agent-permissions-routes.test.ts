@@ -51,8 +51,7 @@ const mockAgentService = vi.hoisted(() => ({
   update: vi.fn(),
   rollbackConfigRevision: vi.fn(),
   updatePermissions: vi.fn(),
-  getChainOfCommand: vi.fn(),
-  getChainOfCommandRoot: vi.fn(async () => ({ kind: "board" })),
+  getChainOfCommandWithRoot: vi.fn(),
   resolveByReference: vi.fn(),
 }));
 
@@ -312,7 +311,7 @@ describe.sequential("agent permission routes", () => {
     mockAgentService.update.mockReset();
     mockAgentService.rollbackConfigRevision.mockReset();
     mockAgentService.updatePermissions.mockReset();
-    mockAgentService.getChainOfCommand.mockReset();
+    mockAgentService.getChainOfCommandWithRoot.mockReset();
     mockAgentService.resolveByReference.mockReset();
     mockBuiltInAgentService.ensureCompanyDefaultAgentGrants.mockReset();
     mockAccessService.canUser.mockReset();
@@ -353,7 +352,7 @@ describe.sequential("agent permission routes", () => {
     mockAgentService.getConfigRevision.mockResolvedValue(null);
     mockAgentService.listConfigRevisions.mockResolvedValue([]);
     mockAgentService.list.mockResolvedValue([baseAgent]);
-    mockAgentService.getChainOfCommand.mockResolvedValue([]);
+    mockAgentService.getChainOfCommandWithRoot.mockResolvedValue({ chainOfCommand: [], chainOfCommandRoot: { kind: "board" } });
     mockAgentService.resolveByReference.mockResolvedValue({ ambiguous: false, agent: baseAgent });
     mockAgentService.create.mockResolvedValue(baseAgent);
     mockAgentService.activatePendingApproval.mockResolvedValue({
