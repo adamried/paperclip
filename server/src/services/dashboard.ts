@@ -26,7 +26,7 @@ function getRecentUtcDateKeys(now: Date, days: number): string[] {
 export function dashboardService(db: Db) {
   const budgets = budgetService(db);
   return {
-    summary: async (companyId: string) => {
+    summary: async (companyId: string, viewerUserId?: string | null) => {
       const company = await db
         .select()
         .from(companies)
@@ -48,10 +48,12 @@ export function dashboardService(db: Db) {
         .groupBy(issues.status);
 
       const pendingApprovals = await db
-        .select({ count: sql<number>`count(*)` })
+        .select({ addresseeUserId: approvals.addresseeUserId })
         .from(approvals)
         .where(and(eq(approvals.companyId, companyId), eq(approvals.status, "pending")))
-        .then((rows) => Number(rows[0]?.count ?? 0));
+        // Approvals addressed to someone else are not this viewer's to decide.
+        .then((rows) => rows.filter((row) =>
+          row.addresseeUserId === null || viewerUserId === undefined || row.addresseeUserId === viewerUserId).length);
 
       const agentCounts: Record<string, number> = {
         active: 0,

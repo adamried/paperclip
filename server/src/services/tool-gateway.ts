@@ -18,6 +18,7 @@ import {
   sql,
 } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
+import { resolveActiveAgentManagerUserId } from "./agent-manager.js";
 import {
   agents,
   approvals,
@@ -2314,6 +2315,10 @@ export function createToolGatewayService(
           companyId: input.session.companyId,
           type: "request_board_approval",
           requestedByAgentId: input.session.agentId,
+          // Same addressee as the paired confirmation card: the agent's manager.
+          addresseeUserId: input.session.agentId
+            ? await resolveActiveAgentManagerUserId(db, input.session.companyId, input.session.agentId)
+            : null,
           payload: {
             title: `Approve high-risk tool action: ${input.tool.name}`,
             summary: `${input.tool.name} is classified as ${input.tool.risk} and requires formal board approval before execution.`,

@@ -501,7 +501,7 @@ function OnboardingWizardInner({
   const { companies, setSelectedCompanyId, loading: companiesLoading } = useCompany();
   const queryClient = useQueryClient();
   // The person setting up the organization; the "I run it" first hire reports
-  // to them. Local mode's implicit board session resolves to no user here.
+  // to them. Local mode's session resolves to its implicit board user.
   const { data: session } = useQuery({
     queryKey: queryKeys.auth.session,
     queryFn: () => authApi.getSession(),
@@ -2206,8 +2206,9 @@ function OnboardingWizardInner({
         name: hireName,
         role: agentRole,
         // "I run it": the helper reports to the person setting up the
-        // organization. Local mode's implicit board user has no session id.
-        ...(firstAgentMode === "board_run" ? { reportsToUserId: currentUserId ?? "local-board" } : {}),
+        // organization. The CTA waits for the session, and local mode's
+        // session resolves to its board user, so the id is always present.
+        ...(firstAgentMode === "board_run" && currentUserId ? { reportsToUserId: currentUserId } : {}),
         adapterType,
         adapterConfig: hireAdapterConfig,
         ...(shouldApplyStoredClaudeLogin ? { applyStoredClaudeLogin: true } : {}),
@@ -2323,7 +2324,7 @@ function OnboardingWizardInner({
       // yet — two organizations for one name, two agents for one hire.
       if (loading) return;
       if (step === 1 && companyName.trim()) void handleCreateCompany();
-      else if (step === 3 && agentName.trim()) setStep(4);
+      else if (step === 3 && agentName.trim() && !(firstAgentMode === "board_run" && !currentUserId)) setStep(4);
       // `connectStepReady`, the same predicate the step's button uses. Spelling
       // the condition out here again is what let this path hire against a
       // source the tile row had never shown, after the button was gated and
@@ -3114,7 +3115,7 @@ function OnboardingWizardInner({
                     step === 1
                       ? !companyName.trim() || loading
                       : step === 3
-                        ? !agentName.trim()
+                        ? !agentName.trim() || (firstAgentMode === "board_run" && !currentUserId)
                         : step === 4
                           ? connectCta.disabled || loading
                           : loading || launchStateIncomplete

@@ -484,6 +484,7 @@ export function agentService(db: Db) {
     companyId: string,
     agentId: string | null,
     data: { reportsTo?: string | null; reportsToUserId?: string | null },
+    existing?: { reportsTo: string | null; reportsToUserId?: string | null } | null,
   ) {
     const setsAgent = data.reportsTo !== undefined;
     const setsUser = data.reportsToUserId !== undefined;
@@ -494,13 +495,21 @@ export function agentService(db: Db) {
       });
     }
     if (data.reportsTo) {
-      await ensureManager(companyId, data.reportsTo);
-      if (agentId) await assertNoCycle(agentId, data.reportsTo);
+      // An unchanged agent manager is not re-validated (it was valid when set).
+      if (data.reportsTo !== existing?.reportsTo) {
+        await ensureManager(companyId, data.reportsTo);
+        if (agentId) await assertNoCycle(agentId, data.reportsTo);
+      }
       data.reportsToUserId = null;
       return;
     }
     if (data.reportsToUserId) {
-      await assertHumanManagerEligible(db, companyId, data.reportsToUserId);
+      // Likewise an unchanged person: a revision rollback or a no-op save must
+      // not fail because the manager has since been suspended; consumers
+      // already skip inactive managers at use time.
+      if (data.reportsToUserId !== (existing?.reportsToUserId ?? null)) {
+        await assertHumanManagerEligible(db, companyId, data.reportsToUserId);
+      }
       data.reportsTo = null;
       return;
     }
@@ -761,7 +770,7 @@ export function agentService(db: Db) {
       }
     }
 
-    await applyManagerExclusivity(existing.companyId, id, data);
+    await applyManagerExclusivity(existing.companyId, id, data, existing);
 
     if (data.name !== undefined) {
       const previousShortname = normalizeAgentUrlKey(existing.name);
@@ -1126,6 +1135,10 @@ export function agentService(db: Db) {
         if (!existing || existing.status !== "pending_approval") return null;
         const approvedPatch = approvedPayload ? configPatchFromApprovalPayload(approvedPayload) : {};
         let patch = { ...approvedPatch } as Partial<typeof agents.$inferInsert>;
+        // The approval payload can be resubmitted by the requester, so the
+        // manager fields it carries get the same validation as a direct write:
+        // one manager at most, same company, eligible person.
+        await agentService(txDb).validateManagerPatch(existing.companyId, existing.id, patch, existing);
         let approvalBindingDecision: ClaudeOAuthBindingInvariantDecision | null = null;
         if (
           Object.prototype.hasOwnProperty.call(patch, "adapterConfig") &&
@@ -1387,6 +1400,9 @@ export function agentService(db: Db) {
       }
       return chain;
     },
+
+    /** Validates and normalizes reportsTo / reportsToUserId on a patch in place. */
+    validateManagerPatch: applyManagerExclusivity,
 
     getChainOfCommandRoot: async (agentId: string): Promise<ChainOfCommandRoot> => {
       // Walk to the top agent of the chain (the agent itself when it has no

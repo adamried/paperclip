@@ -3316,22 +3316,36 @@ export function issueThreadInteractionService(
         resolverPolicy: policy.requestedResolverPolicy,
       };
 
-      // A human-facing card from an agent that reports to a person goes to
-      // that person unless the agent said otherwise. `undefined` means "not
-      // specified"; an explicit null keeps it open to the whole Board.
-      let addresseeSource: "explicit" | "agent_manager" | null =
-        data.addresseeUserId !== undefined ? "explicit" : null;
+      // A human-facing card from an agent with no addressee given goes to the
+      // person the run is acting for (the issue's or requester's responsible
+      // user), and only otherwise to the agent's human manager. `undefined`
+      // means "not specified"; an explicit null keeps it open to the Board.
+      let addresseeDefaulted = false;
       if (
         actor.agentId &&
         normalizedData.addresseeAgentId == null &&
         data.addresseeUserId === undefined
       ) {
-        const managerUserId = await resolveActiveAgentManagerUserId(db, issue.companyId, actor.agentId);
-        if (managerUserId) {
-          normalizedData.addresseeUserId = managerUserId;
-          addresseeSource = "agent_manager";
+        const runResponsibleUserId = data.sourceRunId
+          ? await db
+              .select({ responsibleUserId: heartbeatRuns.responsibleUserId })
+              .from(heartbeatRuns)
+              .where(and(eq(heartbeatRuns.id, data.sourceRunId), eq(heartbeatRuns.companyId, issue.companyId)))
+              .then((rows) => rows[0]?.responsibleUserId ?? null)
+          : null;
+        const defaultAddressee =
+          runResponsibleUserId
+          ?? (await resolveActiveAgentManagerUserId(db, issue.companyId, actor.agentId));
+        if (defaultAddressee) {
+          normalizedData.addresseeUserId = defaultAddressee;
+          addresseeDefaulted = true;
         }
       }
+
+      // A defaulted addressee is derived state, so a retry must not 409 just
+      // because the manager or responsible user changed between attempts.
+      const idempotencyComparable = (existing: { addresseeUserId: string | null }) =>
+        addresseeDefaulted ? { ...normalizedData, addresseeUserId: existing.addresseeUserId } : normalizedData;
 
       if (normalizedData.addresseeAgentId && normalizedData.addresseeUserId) {
         throw unprocessable(
@@ -3399,7 +3413,7 @@ export function issueThreadInteractionService(
           idempotencyKey: normalizedData.idempotencyKey,
         });
         if (existing) {
-          if (!isEquivalentCreateRequest(existing, normalizedData, actor)) {
+          if (!isEquivalentCreateRequest(existing, idempotencyComparable(existing), actor)) {
             throw conflict(
               "Interaction idempotency key already exists for a different request",
               {
@@ -3616,7 +3630,7 @@ export function issueThreadInteractionService(
           idempotencyKey: normalizedData.idempotencyKey,
         });
         if (!existing) throw error;
-        if (!isEquivalentCreateRequest(existing, normalizedData, actor)) {
+        if (!isEquivalentCreateRequest(existing, idempotencyComparable(existing), actor)) {
           throw conflict(
             "Interaction idempotency key already exists for a different request",
             {

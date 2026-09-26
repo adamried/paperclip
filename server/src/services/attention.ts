@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, notInArray, sql } from "drizzle-orm";
+import { loadOrgChartUserSummaries } from "./agent-manager.js";
 import type { Db } from "@paperclipai/db";
 import {
   agents,
@@ -1107,8 +1108,16 @@ export function attentionService(db: Db, serviceOptions: AttentionServiceOptions
         .orderBy(desc(approvals.updatedAt), desc(approvals.id))
         // An approval addressed to a person lands in that person's inbox only,
         // the same rule as addressed interactions below. The Approvals page
-        // still lists every approval.
-        .then((rows) => rows.filter((row) => row.addresseeUserId === null || row.addresseeUserId === options.userId));
+        // still lists every approval. An addressee who is no longer an active
+        // non-viewer member no longer binds routing, so nothing is orphaned.
+        .then(async (rows) => {
+          const addresseeIds = [...new Set(rows.map((row) => row.addresseeUserId).filter((id): id is string => Boolean(id)))];
+          const addressees = await loadOrgChartUserSummaries(db, companyId, addresseeIds);
+          return rows.filter((row) =>
+            row.addresseeUserId === null
+            || row.addresseeUserId === options.userId
+            || addressees.get(row.addresseeUserId)?.active === false);
+        });
 
       const pendingApprovalIds = pendingApprovals.map((approval) => approval.id);
       const approvalIssueRows = pendingApprovalIds.length > 0

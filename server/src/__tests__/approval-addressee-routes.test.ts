@@ -27,6 +27,7 @@ const mockAgentManager = vi.hoisted(() => ({
   assertHumanManagerEligible: vi.fn(),
 }));
 const mockDecisionPolicies = vi.hoisted(() => ({ get: vi.fn() }));
+const mockAssertDecisionAllowed = vi.hoisted(() => vi.fn());
 
 function registerModuleMocks() {
   vi.doMock("../services/index.js", () => ({
@@ -40,6 +41,7 @@ function registerModuleMocks() {
   vi.doMock("../services/agent-manager.js", () => mockAgentManager);
   vi.doMock("../services/approval-decision-policy.js", () => ({
     approvalDecisionPolicyService: () => mockDecisionPolicies,
+    assertApprovalDecisionAllowed: mockAssertDecisionAllowed,
   }));
 }
 
@@ -109,6 +111,7 @@ describe("approval addressee and decision policy", () => {
     mockIssueApprovalService.listIssuesForApproval.mockResolvedValue([]);
     mockLogActivity.mockResolvedValue(undefined);
     mockDecisionPolicies.get.mockResolvedValue({ policy: "any_board" });
+    mockAssertDecisionAllowed.mockResolvedValue(undefined);
     mockApprovalService.create.mockImplementation(async (_companyId: string, input: Record<string, unknown>) => ({
       id: "approval-new",
       companyId: "company-1",
@@ -139,59 +142,71 @@ describe("approval addressee and decision policy", () => {
     expect(mockApprovalService.create).toHaveBeenCalledWith("company-1", expect.objectContaining({ addresseeUserId: "user-2" }));
   });
 
-  it("refuses an agent addressing anyone but its own manager", async () => {
+  it("always addresses an agent's request to its own manager, ignoring the body", async () => {
     mockAgentManager.resolveActiveAgentManagerUserId.mockResolvedValue("manager-1");
-    const res = await request(appFor({ ...agentActor, runId: null }))
+    const app = appFor({ ...agentActor, runId: null });
+
+    const explicitNull = await request(app)
+      .post("/api/companies/company-1/approvals")
+      .send({ type: "request_board_approval", payload: {}, addresseeUserId: null, requestedByAgentId: "00000000-0000-4000-8000-000000000009" });
+    expect(explicitNull.status).toBe(201);
+    expect(mockAgentManager.resolveActiveAgentManagerUserId).toHaveBeenCalledWith(expect.anything(), "company-1", "agent-1");
+    expect(mockApprovalService.create).toHaveBeenCalledWith("company-1", expect.objectContaining({
+      requestedByAgentId: "agent-1",
+      addresseeUserId: "manager-1",
+    }));
+
+    const someoneElse = await request(app)
       .post("/api/companies/company-1/approvals")
       .send({ type: "request_board_approval", payload: {}, addresseeUserId: "user-9" });
-
-    expect(res.status).toBe(422);
-    expect(res.body.code).toBe("approval_addressee_not_allowed");
-    expect(mockApprovalService.create).not.toHaveBeenCalled();
+    expect(someoneElse.status).toBe(422);
+    expect(someoneElse.body.code).toBe("approval_addressee_not_allowed");
   });
 
-  it("blocks other board users when the addressee chose addressee_only, naming them", async () => {
+  it("addresses nobody when the agent has no active manager", async () => {
+    mockAgentManager.resolveActiveAgentManagerUserId.mockResolvedValue(null);
+    const res = await request(appFor({ ...agentActor, runId: null }))
+      .post("/api/companies/company-1/approvals")
+      .send({ type: "request_board_approval", payload: {} });
+    expect(res.status).toBe(201);
+    expect(mockApprovalService.create).toHaveBeenCalledWith("company-1", expect.objectContaining({ addresseeUserId: null }));
+  });
+
+  it("runs the shared decision gate before approve, reject, and request-revision", async () => {
+    const { forbidden } = await import("../errors.js");
     mockApprovalService.getById.mockResolvedValue(pendingApproval("manager-1"));
-    mockDecisionPolicies.get.mockResolvedValue({ policy: "addressee_only" });
+    mockAssertDecisionAllowed.mockRejectedValue(
+      forbidden("Only Dana Operator can decide this approval.", { code: "approval_addressee_only" }),
+    );
+    const app = appFor(boardActor("user-2"));
 
-    const res = await request(appFor(boardActor("user-2")))
-      .post("/api/approvals/approval-1/approve")
-      .send({});
-
-    expect(res.status).toBe(403);
-    expect(res.body.code).toBe("approval_addressee_only");
-    // The error handler forwards only `code` from details; the message names
-    // the addressee so the UI can say who to ask.
-    expect(res.body.error).toContain("Dana Operator");
+    for (const path of ["approve", "reject", "request-revision"]) {
+      const res = await request(app).post(`/api/approvals/approval-1/${path}`).send({});
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe("approval_addressee_only");
+      // The error handler forwards only `code` from details; the message
+      // names the addressee so the UI can say who to ask.
+      expect(res.body.error).toContain("Dana Operator");
+    }
+    expect(mockAssertDecisionAllowed).toHaveBeenCalledTimes(3);
+    expect(mockAssertDecisionAllowed).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ companyId: "company-1", addresseeUserId: "manager-1" }),
+      "user-2",
+    );
     expect(mockApprovalService.approve).not.toHaveBeenCalled();
+    expect(mockApprovalService.reject).not.toHaveBeenCalled();
+    expect(mockApprovalService.requestRevision).not.toHaveBeenCalled();
   });
 
-  it("lets the addressee decide, and anyone under any_board", async () => {
+  it("proceeds when the gate allows", async () => {
     mockApprovalService.getById.mockResolvedValue(pendingApproval("manager-1"));
     mockApprovalService.reject.mockResolvedValue({ approval: { ...pendingApproval("manager-1"), status: "rejected" }, applied: true });
-    mockDecisionPolicies.get.mockResolvedValue({ policy: "addressee_only" });
 
-    const mine = await request(appFor(boardActor("manager-1")))
+    const res = await request(appFor(boardActor("manager-1")))
       .post("/api/approvals/approval-1/reject")
       .send({});
-    expect(mine.status).toBe(200);
-
-    mockDecisionPolicies.get.mockResolvedValue({ policy: "any_board" });
-    const other = await request(appFor(boardActor("user-2")))
-      .post("/api/approvals/approval-1/reject")
-      .send({});
-    expect(other.status).toBe(200);
-  });
-
-  it("does not consult the policy for approvals with no addressee", async () => {
-    mockApprovalService.getById.mockResolvedValue(pendingApproval(null));
-    mockApprovalService.requestRevision.mockResolvedValue({ ...pendingApproval(null), status: "revision_requested" });
-
-    const res = await request(appFor(boardActor("user-2")))
-      .post("/api/approvals/approval-1/request-revision")
-      .send({});
-
     expect(res.status).toBe(200);
-    expect(mockDecisionPolicies.get).not.toHaveBeenCalled();
+    expect(mockAssertDecisionAllowed).toHaveBeenCalledWith(expect.anything(), expect.anything(), "manager-1");
   });
 });

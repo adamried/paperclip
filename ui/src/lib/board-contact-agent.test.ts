@@ -42,4 +42,10 @@ describe("boardContactAgent", () => {
     expect(boardContactAgent([theirs, mine], "me")).toBe(mine);
     expect(boardContactAgent([theirs, mine], null)).toBeNull();
   });
+
+  it("uses the only root agent even when a person manages it", () => {
+    const helper = agent({ id: "helper", role: "chief_of_staff", reportsToUserId: "me" });
+    const report = agent({ id: "report", reportsTo: "helper" });
+    expect(boardContactAgent([report, helper], null)).toBe(helper);
+  });
 });

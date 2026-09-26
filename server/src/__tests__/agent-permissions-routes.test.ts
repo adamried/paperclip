@@ -1821,10 +1821,14 @@ describe.sequential("agent permission routes", () => {
 
   it("writes change-authority grants for a board direct level and keeps the field out of the permissions JSON", async () => {
     mockAgentService.updatePermissions.mockResolvedValue({ ...baseAgent, role: "chief_of_staff", reportsTo: "ceo-agent" });
-    mockAccessService.listPrincipalGrants.mockResolvedValue([
-      { permissionKey: "tasks:assign", scope: null },
-      { permissionKey: "agents:configure", scope: null },
-    ]);
+    // The route reads the current grants before writing (to skip a no-op) and
+    // again for the response: none before, the new grant after.
+    mockAccessService.listPrincipalGrants
+      .mockResolvedValueOnce([{ permissionKey: "tasks:assign", scope: null }])
+      .mockResolvedValue([
+        { permissionKey: "tasks:assign", scope: null },
+        { permissionKey: "agents:configure", scope: null },
+      ]);
 
     const app = await createApp({
       type: "board",
@@ -1862,9 +1866,9 @@ describe.sequential("agent permission routes", () => {
 
   it("writes only the suggest grant for a board suggest level", async () => {
     mockAgentService.updatePermissions.mockResolvedValue({ ...baseAgent, role: "chief_of_staff", reportsTo: "ceo-agent" });
-    mockAccessService.listPrincipalGrants.mockResolvedValue([
-      { permissionKey: "agents:suggest-changes", scope: null },
-    ]);
+    mockAccessService.listPrincipalGrants
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([{ permissionKey: "agents:suggest-changes", scope: null }]);
 
     const app = await createApp({
       type: "board",
@@ -1891,7 +1895,9 @@ describe.sequential("agent permission routes", () => {
 
   it("clears both change grants for a board none level", async () => {
     mockAgentService.updatePermissions.mockResolvedValue({ ...baseAgent, role: "chief_of_staff", reportsTo: "ceo-agent" });
-    mockAccessService.listPrincipalGrants.mockResolvedValue([]);
+    mockAccessService.listPrincipalGrants
+      .mockResolvedValueOnce([{ permissionKey: "agents:configure", scope: null }])
+      .mockResolvedValue([]);
 
     const app = await createApp({
       type: "board",
@@ -1996,6 +2002,57 @@ describe.sequential("agent permission routes", () => {
     expect(res.body.code).toBe("agent_change_authority_locked");
     expect(mockAgentService.updatePermissions).not.toHaveBeenCalled();
     expect(mockAccessService.setPrincipalPermission).not.toHaveBeenCalled();
+  });
+
+  it("does not rewrite change grants when the level is unchanged", async () => {
+    mockAgentService.updatePermissions.mockResolvedValue({ ...baseAgent });
+    mockAccessService.listPrincipalGrants.mockResolvedValue([
+      { permissionKey: "agents:configure", scope: { allow: ["subtree:x"] } },
+    ]);
+
+    const app = await createApp({
+      type: "board",
+      userId: "board-user",
+      source: "local_implicit",
+      isInstanceAdmin: true,
+      companyIds: [companyId],
+    });
+
+    const res = await requestApp(app, (baseUrl) => request(baseUrl)
+      .patch(`/api/agents/${agentId}/permissions`)
+      .send({ canCreateAgents: false, canAssignTasks: true, agentChangeAuthority: "direct" }));
+
+    expect(res.status).toBe(200);
+    expect(mockAccessService.setPrincipalPermission).toHaveBeenCalledTimes(1);
+    expect(mockAccessService.setPrincipalPermission).toHaveBeenCalledWith(
+      companyId, "agent", agentId, "tasks:assign", true, "board-user",
+    );
+  });
+
+  it("denies an agent changing its own manager without a change grant", async () => {
+    mockAgentService.getById.mockImplementation(async (id: string) =>
+      id === agentId ? { ...baseAgent } : null);
+    mockAccessService.decide.mockImplementation(async (input: { action?: string; scope?: { requiresChangeGrant?: boolean } }) => (
+      input.action === "agent_config:update" && input.scope?.requiresChangeGrant
+        ? { allowed: false, reason: "deny_no_grant", explanation: "Missing permission: agents:configure or agents:suggest-changes." }
+        : { allowed: true, reason: "allow_self", explanation: "Allowed by test." }
+    ));
+
+    const app = await createApp({
+      type: "agent",
+      agentId,
+      companyId,
+      runId: "run-1",
+      source: "agent_key",
+    });
+
+    for (const body of [{ reportsToUserId: "board-user" }, { reportsTo: null }]) {
+      const res = await requestApp(app, (baseUrl) => request(baseUrl)
+        .patch(`/api/agents/${agentId}`)
+        .send(body));
+      expect(res.status).toBe(403);
+    }
+    expect(mockAgentService.update).not.toHaveBeenCalled();
   });
 
   it("rejects CEO permission updates outside the caller company scope", async () => {

@@ -67,6 +67,7 @@ import { validate } from "../middleware/validate.js";
 import { agentInstructionsBundleMode } from "../services/agent-instructions.js";
 import {
   agentChangeAuthorityFloor,
+  agentChangeAuthorityFromKeys,
   compareAgentChangeAuthority,
   deriveAgentChangeAuthority,
   grantWritesForAgentChangeAuthority,
@@ -162,6 +163,7 @@ import {
   type OrgChartAgentNode,
 } from "../services/org-chart-tree.js";
 import { loadOrgChartUserSummaries, resolveActiveAgentManagerUserId } from "../services/agent-manager.js";
+import { assertApprovalDecisionAllowed } from "../services/approval-decision-policy.js";
 import type { OrgTreeNode } from "@paperclipai/shared";
 import {
   instanceSettingsService,
@@ -4986,15 +4988,21 @@ export function agentRoutes(
       grantedByUserId,
     );
     if (agentChangeAuthority !== undefined) {
-      for (const write of grantWritesForAgentChangeAuthority(agentChangeAuthority)) {
-        await access.setPrincipalPermission(
-          agent.companyId,
-          "agent",
-          agent.id,
-          write.permissionKey,
-          write.enabled,
-          grantedByUserId,
-        );
+      // Only rewrite the change grants when the level actually changes, so an
+      // existing scoped grant at the same level keeps its scope.
+      const currentGrants = await access.listPrincipalGrants(agent.companyId, "agent", agent.id);
+      const currentLevel = agentChangeAuthorityFromKeys(currentGrants.map((grant) => grant.permissionKey));
+      if (currentLevel !== agentChangeAuthority) {
+        for (const write of grantWritesForAgentChangeAuthority(agentChangeAuthority)) {
+          await access.setPrincipalPermission(
+            agent.companyId,
+            "agent",
+            agent.id,
+            write.permissionKey,
+            write.enabled,
+            grantedByUserId,
+          );
+        }
       }
     }
 
@@ -5429,6 +5437,16 @@ export function agentRoutes(
         },
       );
     }
+    // Who an agent reports to decides who receives its escalations and whose
+    // identity its runs use, so an agent never changes it under self access:
+    // it needs a change grant (or an accepted change consent) like a profile
+    // change, even on its own row.
+    if (
+      req.actor.type === "agent" &&
+      (hasOwn(patchData, "reportsTo") || hasOwn(patchData, "reportsToUserId"))
+    ) {
+      await assertCanApplyProtectedAgentChange(req, existing, [agentProfileChangeTargetKey(existing.id)]);
+    }
     const touchesProfileFields = touchesAgentProfileChangeConsentFields(patchData);
     const profileOnlyChange = touchesProfileFields && Object.keys(patchData).every((key) =>
       (AGENT_PROFILE_CHANGE_CONSENT_FIELDS as readonly string[]).includes(key),
@@ -5601,6 +5619,7 @@ export function agentRoutes(
 
     let agent: Awaited<ReturnType<typeof svc.getById>> | null = null;
     if (openApproval) {
+      await assertApprovalDecisionAllowed(db, openApproval, req.actor.userId ?? null);
       await approvalsSvc.approve(openApproval.id, decidedByUserId);
       agent = await svc.getById(id);
     } else {
@@ -5652,6 +5671,7 @@ export function agentRoutes(
     if (existing.status === "pending_approval") {
       const openApproval = await approvalsSvc.findOpenHireApprovalForAgent(existing.companyId, id);
       if (openApproval) {
+        await assertApprovalDecisionAllowed(db, openApproval, req.actor.userId ?? null);
         await approvalsSvc.reject(openApproval.id, req.actor.userId ?? "board");
         agent = await svc.getById(id);
       }

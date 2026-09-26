@@ -3231,8 +3231,9 @@ function buildManifestFromPackageFiles(
     const runtimeConfig = extensionRuntime ?? {};
     const title = asString(frontmatter.title);
     // Human managers are instance-local identities and never round-trip
-    // through a package. Drop any such link and say so; the agent imports as
-    // reporting to the Board until a manager is chosen.
+    // through a package: export writes neither key. A hand-edited package may
+    // still carry one; drop it and say so, and the agent imports as reporting
+    // to the Board until a manager is chosen.
     if (asString(extension.reportsToUserId) ?? asString(frontmatter.reportsToUser)) {
       warnings.push(
         `Agent ${slug} reported to a person in the source company; that link was not imported. Set a manager after import.`,

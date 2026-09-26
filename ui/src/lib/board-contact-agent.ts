@@ -38,5 +38,8 @@ export function boardContactAgent<T extends BoardContactCandidate>(
     const mine = roots.find((agent) => agent.reportsToUserId === currentUserId);
     if (mine) return mine;
   }
+  // A company with one root agent, whoever manages it, still has one obvious
+  // contact (the "I run it" onboarding shape).
+  if (roots.length === 1) return roots[0]!;
   return null;
 }

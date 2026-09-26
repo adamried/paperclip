@@ -15,6 +15,7 @@ import { useStreamlinedUiEnabled } from "../hooks/useStreamlinedUiEnabled";
 import { queryKeys } from "../lib/queryKeys";
 import { isPlatformManagedEnvironment } from "../lib/managed-sandbox-environment";
 import { AgentStatusBadge, AgentStatusCapsule } from "../components/StatusBadge";
+import { Identity } from "../components/Identity";
 import { MembershipAction } from "../components/MembershipAction";
 import { StarToggle } from "../components/StarToggle";
 import { EntityRow } from "../components/EntityRow";
@@ -26,7 +27,7 @@ import { relativeTime, cn, agentRouteRef, agentUrl } from "../lib/utils";
 import { PageTabBar } from "../components/PageTabBar";
 import { Tabs } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { AlertTriangle, Bot, Plus, List, Network } from "lucide-react";
+import { AlertTriangle, Bot, Plus, List, Network, Landmark } from "lucide-react";
 import { AGENT_ROLE_LABELS, type Agent, type Environment, type EnvironmentCapabilities } from "@paperclipai/shared";
 import {
   isStarred,
@@ -618,6 +619,44 @@ function OrgTreeNode({
   onConfigureBuiltIn: (state: BuiltInAgentState) => void;
 }) {
   const agent = agentMap.get(node.id);
+  // The Board and people are containers, not agents: a heading with the
+  // agents under it, no link, no membership or lifecycle controls.
+  if (node.kind === "board" || node.kind === "user") {
+    return (
+      <div style={{ paddingLeft: depth * 24 }} data-org-node-kind={node.kind}>
+        <div className="flex items-center gap-3 px-3 py-2">
+          {node.kind === "board"
+            ? <Landmark className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+            : <Identity name={node.name} avatarUrl={node.image} size="xs" />}
+          <span className="text-sm font-medium">{node.name}</span>
+          <span className="text-xs text-muted-foreground">
+            {node.kind === "board" ? "Owns the company" : node.status === "inactive" ? "Manager (inactive member)" : "Manager"}
+          </span>
+        </div>
+        {node.reports.length > 0 && (
+          <div className="border-l border-border ml-4">
+            {node.reports.map((child) => (
+              <OrgTreeNode
+                key={child.id}
+                node={child}
+                depth={depth + 1}
+                agentMap={agentMap}
+                liveRunByAgent={liveRunByAgent}
+                environmentByAgentId={environmentByAgentId}
+                environmentDataLoading={environmentDataLoading}
+                showEnvironment={showEnvironment}
+                tab={tab}
+                memberships={memberships}
+                membershipMutation={membershipMutation}
+                builtInByAgentId={builtInByAgentId}
+                onConfigureBuiltIn={onConfigureBuiltIn}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
   const builtInState = builtInByAgentId.get(node.id);
   const showBuiltInLifecycle = builtInState?.status === "needs_setup" || builtInState?.status === "pending_approval";
   const hasInvalidOrgChain = Boolean(agent && agent.orgChainHealth?.status === "invalid_org_chain");

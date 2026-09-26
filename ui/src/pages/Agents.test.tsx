@@ -465,6 +465,51 @@ describe("Agents", () => {
     expect(container.textContent).toContain("gpt-5.4");
   });
 
+  it("renders the Board and people as headings, not agent rows, in the org list", async () => {
+    mockAgentsApi.org.mockResolvedValue([
+      {
+        kind: "board",
+        id: "board",
+        name: "The Board",
+        role: "board",
+        status: "active",
+        reports: [
+          {
+            kind: "user",
+            id: "user:user-1",
+            name: "Dana Operator",
+            role: "owner",
+            status: "active",
+            image: null,
+            reports: [
+              { kind: "agent", id: "agent-1", name: "Alpha", role: "engineer", status: "active", reports: [] },
+            ],
+          },
+        ],
+      },
+    ]);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(
+        <QueryClientProvider client={queryClient}>
+          <ToastProvider>
+            <Agents initialView="org" />
+          </ToastProvider>
+        </QueryClientProvider>,
+      );
+    });
+    await flushReact();
+    await flushReact();
+
+    expect(container.querySelector('[data-org-node-kind="board"]')).not.toBeNull();
+    expect(container.querySelector('[data-org-node-kind="user"]')).not.toBeNull();
+    expect(container.querySelector('a[href*="/agents/board"]')).toBeNull();
+    expect(container.querySelector('a[href*="/agents/user:"]')).toBeNull();
+    expect(container.textContent).toContain("The Board");
+    expect(container.textContent).toContain("Dana Operator");
+  });
+
   it("gives mobile agent names the full row width after the leading status indicator", async () => {
     mockSidebarState.isMobile = true;
     mockResourceMembershipsApi.listMine.mockResolvedValue({

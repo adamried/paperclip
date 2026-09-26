@@ -13,6 +13,8 @@ import {
 } from "@paperclipai/db";
 import { errorHandler } from "../middleware/index.js";
 import { approvalDecisionPolicyRoutes } from "../routes/approval-decision-policy.js";
+import { assertApprovalDecisionAllowed } from "../services/approval-decision-policy.js";
+import { eq, and } from "drizzle-orm";
 import {
   getEmbeddedPostgresTestSupport,
   startEmbeddedPostgresTestDatabase,
@@ -106,7 +108,30 @@ describeEmbeddedPostgres("approval decision policy routes", () => {
     expect(activity.some((row) => row.action === "approval.decision_policy_updated")).toBe(true);
   });
 
-  it("rejects an unknown policy and refuses non-admins editing someone else", async () => {
+  it("gates decisions by the addressee's policy and releases them when the addressee is inactive", async () => {
+    const { companyId, userId, otherUserId } = await seed();
+    const approval = { companyId, addresseeUserId: userId };
+
+    // Default any_board: anyone decides.
+    await expect(assertApprovalDecisionAllowed(db, approval, otherUserId)).resolves.toBeUndefined();
+
+    await db.insert(userApprovalDecisionPolicies).values({ companyId, userId, policy: "addressee_only" });
+    await expect(assertApprovalDecisionAllowed(db, approval, userId)).resolves.toBeUndefined();
+    await expect(assertApprovalDecisionAllowed(db, approval, otherUserId)).rejects.toMatchObject({
+      status: 403,
+      details: expect.objectContaining({ code: "approval_addressee_only", addresseeName: "User" }),
+    });
+    await expect(assertApprovalDecisionAllowed(db, { companyId, addresseeUserId: null }, otherUserId)).resolves.toBeUndefined();
+
+    // A suspended addressee no longer binds anyone.
+    await db
+      .update(companyMemberships)
+      .set({ status: "suspended" })
+      .where(and(eq(companyMemberships.companyId, companyId), eq(companyMemberships.principalId, userId)));
+    await expect(assertApprovalDecisionAllowed(db, approval, otherUserId)).resolves.toBeUndefined();
+  });
+
+  it("rejects an unknown policy and has no route for editing someone else's policy", async () => {
     const { companyId, userId, otherUserId } = await seed();
     const app = appFor(boardActor(companyId, userId));
 
@@ -115,9 +140,11 @@ describeEmbeddedPostgres("approval decision policy routes", () => {
       .send({ policy: "everyone" });
     expect(invalid.status).toBe(400);
 
-    const forbidden = await request(app)
+    // The policy is the person's own consent boundary; there is deliberately
+    // no administrator variant.
+    const missing = await request(app)
       .put(`/companies/${companyId}/users/${otherUserId}/approval-decision-policy`)
-      .send({ policy: "addressee_only" });
-    expect(forbidden.status).toBe(403);
+      .send({ policy: "any_board" });
+    expect(missing.status).toBe(404);
   });
 });

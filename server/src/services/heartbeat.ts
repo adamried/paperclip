@@ -20207,10 +20207,13 @@ export function heartbeatService(
         responsibleUserId,
       };
       context.executionIdentityRunId = run.id;
+      // A manager-derived identity is a per-run fallback, not the issue's
+      // owner: stamping it would make a later-suspended manager sticky.
       if (
         responsibleUserId &&
         issueContext &&
-        !issueContext.responsibleUserId
+        !issueContext.responsibleUserId &&
+        readNonEmptyString(context.executionIdentityCause) !== "agent_manager"
       ) {
         await db
           .update(issues)

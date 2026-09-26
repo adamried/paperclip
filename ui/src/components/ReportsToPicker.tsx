@@ -61,6 +61,8 @@ export function ReportsToPicker({
 
   const currentAgent = value.kind === "agent" ? agents.find((a) => a.id === value.id) ?? null : null;
   const currentUser = value.kind === "user" ? profiles.get(value.id) ?? null : null;
+  const currentUserEntry = value.kind === "user" ? users.find((entry) => entry.principalId === value.id) ?? null : null;
+  const currentUserIsViewer = currentUserEntry?.membershipRole === "viewer";
   const terminatedManager = currentAgent?.status === "terminated";
   const unknownAgent = value.kind === "agent" && !currentAgent;
   const unknownUser = value.kind === "user" && !currentUser;
@@ -111,7 +113,7 @@ export function ReportsToPicker({
             <>
               <Identity name={currentUser.label} avatarUrl={currentUser.image} size="xs" />
               <span className="min-w-0 truncate">
-                {`Reports to ${currentUser.label}${value.kind === "user" && value.id === currentUserId ? " (you)" : ""}`}
+                {`Reports to ${currentUser.label}${value.kind === "user" && value.id === currentUserId ? " (you)" : ""}${currentUserIsViewer ? " (viewer, inactive as manager)" : ""}`}
               </span>
             </>
           ) : isBoard ? (

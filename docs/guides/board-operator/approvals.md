@@ -40,7 +40,7 @@ When an agent that reports to a person requests approval, the request is address
 Each person chooses, per organization, who may decide approvals addressed to them. Open **Profile settings → Who may decide approvals addressed to me**:
 
 - **Anyone on the Board can decide** (default) — other Board members can approve or reject on your behalf. Use this for cover when you are out.
-- **Only I can decide** — other Board members see the approval but get a clear refusal naming you if they try to decide it. Instance admins are not exempt. Flip it back when you want cover; the approval itself does not change.
+- **Only I can decide** — other Board members see the approval but get a clear refusal naming you if they try to decide it. Instance admins are not exempt, and nobody else can change this setting for you. Flip it back when you want cover; the approval itself does not change. If you leave the organization or become a viewer, your addressed approvals open up to the Board so nothing is stranded.
 
 ## Reviewing Approvals
 
