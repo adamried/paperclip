@@ -39,7 +39,15 @@ function extractTextContent(content: string | Array<{ type: string; text?: strin
 // Track pending tool calls for proper toolUseId matching
 let pendingToolCalls = new Map<string, { toolName: string; args: unknown }>();
 
+// Per-message flags: once a delta has streamed, the block-end events for the
+// same content must not re-emit it (Pi sends delta, *_end, message_end,
+// turn_end and agent_end for the same text).
+let streamedText = false;
+let streamedThinking = false;
+
 export function resetParserState(): void {
+  streamedText = false;
+  streamedThinking = false;
   pendingToolCalls.clear();
 }
 
@@ -59,60 +67,47 @@ export function parsePiStdoutLine(line: string, ts: string): TranscriptEntry[] {
     return [];
   }
 
+  // Pure lifecycle markers with no user-visible content
+  if (type === "session" || type === "agent_settled") {
+    return [];
+  }
+
   // Agent lifecycle
   if (type === "agent_start") {
     return [{ kind: "system", ts, text: "🚀 Pi agent started" }];
   }
 
   if (type === "agent_end") {
+    // Assistant text and thinking were already emitted by message_update /
+    // message_end. Emit usage only, to avoid repeating the final answer.
     const entries: TranscriptEntry[] = [];
-    
-    // Extract final message from messages array if available
     const messages = parsed.messages as Array<Record<string, unknown>> | undefined;
-    if (messages && messages.length > 0) {
-      const lastMessage = messages[messages.length - 1];
-      if (lastMessage?.role === "assistant") {
-        const content = lastMessage.content as string | Array<{ type: string; text?: string; thinking?: string }>;
-        const { text, thinking } = extractTextContent(content);
-        
-        if (thinking) {
-          entries.push({ kind: "thinking", ts, text: thinking });
-        }
-        if (text) {
-          entries.push({ kind: "assistant", ts, text });
-        }
-        
-        // Extract usage
-        const usage = asRecord(lastMessage.usage);
-        if (usage) {
-          const inputTokens = (usage.inputTokens ?? usage.input ?? 0) as number;
-          const outputTokens = (usage.outputTokens ?? usage.output ?? 0) as number;
-          const cachedTokens = (usage.cacheRead ?? usage.cachedInputTokens ?? 0) as number;
-          const costRecord = asRecord(usage.cost);
-          const costUsd = (costRecord?.total ?? usage.costUsd ?? 0) as number;
-          
-          if (inputTokens > 0 || outputTokens > 0) {
-            entries.push({
-              kind: "result",
-              ts,
-              text: "Run completed",
-              inputTokens,
-              outputTokens,
-              cachedTokens,
-              costUsd,
-              subtype: "end",
-              isError: false,
-              errors: [],
-            });
-          }
-        }
+    const lastAssistant = [...(messages ?? [])].reverse().find((m) => m?.role === "assistant");
+    const usage = asRecord(lastAssistant?.usage);
+    if (usage) {
+      const inputTokens = (usage.inputTokens ?? usage.input ?? 0) as number;
+      const outputTokens = (usage.outputTokens ?? usage.output ?? 0) as number;
+      const cachedTokens = (usage.cacheRead ?? usage.cachedInputTokens ?? 0) as number;
+      const costRecord = asRecord(usage.cost);
+      const costUsd = (costRecord?.total ?? usage.costUsd ?? 0) as number;
+      if (inputTokens > 0 || outputTokens > 0) {
+        entries.push({
+          kind: "result",
+          ts,
+          text: "Run completed",
+          inputTokens,
+          outputTokens,
+          cachedTokens,
+          costUsd,
+          subtype: "end",
+          isError: false,
+          errors: [],
+        });
       }
     }
-    
     if (entries.length === 0) {
       entries.push({ kind: "system", ts, text: "✅ Pi agent finished" });
     }
-    
     return entries;
   }
 
@@ -122,64 +117,15 @@ export function parsePiStdoutLine(line: string, ts: string): TranscriptEntry[] {
   }
 
   if (type === "turn_end") {
-    const message = asRecord(parsed.message);
-    const toolResults = parsed.toolResults as Array<Record<string, unknown>> | undefined;
-    
-    const entries: TranscriptEntry[] = [];
-    
-    if (message) {
-      const content = message.content as string | Array<{ type: string; text?: string; thinking?: string }>;
-      const { text, thinking } = extractTextContent(content);
-      
-      if (thinking) {
-        entries.push({ kind: "thinking", ts, text: thinking });
-      }
-      if (text) {
-        entries.push({ kind: "assistant", ts, text });
-      }
-    }
-    
-    // Process tool results - match with pending tool calls
-    if (toolResults) {
-      for (const tr of toolResults) {
-        const toolCallId = asString(tr.toolCallId, `tool-${Date.now()}`);
-        const content = tr.content;
-        const isError = tr.isError === true;
-        
-        // Extract text from Pi's content array format
-        let contentStr: string;
-        if (typeof content === "string") {
-          contentStr = content;
-        } else if (Array.isArray(content)) {
-          const extracted = extractTextContent(content as Array<{ type: string; text?: string }>);
-          contentStr = extracted.text || JSON.stringify(content);
-        } else {
-          contentStr = JSON.stringify(content);
-        }
-        
-        // Get tool name from pending calls if available
-        const pendingCall = pendingToolCalls.get(toolCallId);
-        const toolName = asString(tr.toolName, pendingCall?.toolName || "tool");
-        
-        entries.push({
-          kind: "tool_result",
-          ts,
-          toolUseId: toolCallId,
-          toolName,
-          content: contentStr,
-          isError,
-        });
-        
-        // Clean up pending call
-        pendingToolCalls.delete(toolCallId);
-      }
-    }
-    
-    return entries;
+    // Message content comes from message_update/message_end and tool results
+    // from tool_execution_end. turn_end repeats both, so emit nothing.
+    return [];
   }
 
   // Message streaming
   if (type === "message_start") {
+    streamedText = false;
+    streamedThinking = false;
     return [];
   }
 
@@ -192,6 +138,7 @@ export function parsePiStdoutLine(line: string, ts: string): TranscriptEntry[] {
       if (msgType === "thinking_delta") {
         const delta = asString(assistantEvent.delta);
         if (delta) {
+          streamedThinking = true;
           return [{ kind: "thinking", ts, text: delta, delta: true }];
         }
       }
@@ -200,6 +147,7 @@ export function parsePiStdoutLine(line: string, ts: string): TranscriptEntry[] {
       if (msgType === "text_delta") {
         const delta = asString(assistantEvent.delta);
         if (delta) {
+          streamedText = true;
           return [{ kind: "assistant", ts, text: delta, delta: true }];
         }
       }
@@ -207,7 +155,7 @@ export function parsePiStdoutLine(line: string, ts: string): TranscriptEntry[] {
       // Handle thinking end - emit full thinking block
       if (msgType === "thinking_end") {
         const content = asString(assistantEvent.content);
-        if (content) {
+        if (content && !streamedThinking) {
           return [{ kind: "thinking", ts, text: content }];
         }
       }
@@ -215,7 +163,7 @@ export function parsePiStdoutLine(line: string, ts: string): TranscriptEntry[] {
       // Handle text end - emit full text block
       if (msgType === "text_end") {
         const content = asString(assistantEvent.content);
-        if (content) {
+        if (content && !streamedText) {
           return [{ kind: "assistant", ts, text: content }];
         }
       }
@@ -225,22 +173,22 @@ export function parsePiStdoutLine(line: string, ts: string): TranscriptEntry[] {
 
   if (type === "message_end") {
     const message = asRecord(parsed.message);
-    if (message) {
+    // Pi emits message_end for system, user and toolResult messages too.
+    // Only assistant messages belong in the transcript; tool results come
+    // from tool_execution_end.
+    if (message && message.role === "assistant") {
       const content = message.content as string | Array<{ type: string; text?: string; thinking?: string }>;
       const { text, thinking } = extractTextContent(content);
-      
       const entries: TranscriptEntry[] = [];
-      
-      // Emit final thinking block if present
-      if (thinking) {
+      // Skip content already streamed as deltas.
+      if (thinking && !streamedThinking) {
         entries.push({ kind: "thinking", ts, text: thinking });
       }
-      
-      // Emit final text block if present
-      if (text) {
+      if (text && !streamedText) {
         entries.push({ kind: "assistant", ts, text });
       }
-      
+      streamedText = false;
+      streamedThinking = false;
       return entries;
     }
     return [];
