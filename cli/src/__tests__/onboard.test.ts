@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { onboard } from "../commands/onboard.js";
+import { authenticatedFirstAdminGuidance, onboard } from "../commands/onboard.js";
 import type { PaperclipConfig } from "../config/schema.js";
 
 const runCommandMock = vi.hoisted(() => vi.fn());
@@ -283,6 +283,31 @@ describe("onboard", () => {
     expect(raw.server.exposure).toBe("private");
     expect(raw.server.bind).toBe("tailnet");
     expect(raw.server.host).toBe("127.0.0.1");
+  });
+
+  it("points authenticated installs at the first-admin steps instead of attaching credentials inline", () => {
+    const privateLoopback = authenticatedFirstAdminGuidance({
+      exposure: "private",
+      bind: "loopback",
+      host: "127.0.0.1",
+      port: 3100,
+    }).join("\n");
+    expect(privateLoopback).toContain("not in a hosted subscription");
+    expect(privateLoopback).toContain("loopback (127.0.0.1):3100");
+    expect(privateLoopback).toContain("Claim this instance");
+    expect(privateLoopback).toContain("The signed-in account becomes the first admin");
+    expect(privateLoopback).toContain("paperclipai auth bootstrap-ceo");
+    expect(privateLoopback).toContain("paperclipai auth set-operator-credentials --email <email>");
+
+    // Browser claim is disabled for public exposure, so only the invite path is offered.
+    const publicGuidance = authenticatedFirstAdminGuidance({
+      exposure: "public",
+      bind: "lan",
+      host: "0.0.0.0",
+      port: 3100,
+    }).join("\n");
+    expect(publicGuidance).not.toContain("Claim this instance");
+    expect(publicGuidance).toContain("paperclipai auth bootstrap-ceo");
   });
 
   it("ignores deployment env overrides during --yes quickstart", async () => {

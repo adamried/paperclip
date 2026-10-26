@@ -299,7 +299,8 @@ Mode taxonomy and design intent are documented in `doc/DEPLOYMENT-MODES.md`.
 Current CLI behavior:
 
 - `paperclipai onboard` and `paperclipai configure --section server` set deployment mode in config
-- server onboarding/configure ask for reachability intent and write `server.bind`
+- server onboarding/configure first ask "How will you use Paperclip?" (`Only on this computer`, `Other devices, teammates, or a remote assistant`, `Not sure yet`, `Advanced`) to decide whether login is required, then ask how other devices reach it (`Private network` or `Tailnet`) only when they will; they write `server.deploymentMode` and `server.bind` separately, so `Not sure yet` yields `authenticated/private` on loopback
+- when login is chosen on a fresh install, onboarding prints the first-admin steps (browser claim or `auth bootstrap-ceo` after `paperclipai run`, or `auth set-operator-credentials` for a database that already ran without login) instead of prompting for credentials, since no database is running yet
 - `paperclipai run --bind <loopback|lan|tailnet>` passes a quickstart bind preset into first-run onboarding when config is missing
 - runtime can override mode with `PAPERCLIP_DEPLOYMENT_MODE`
 - `paperclipai run` and `paperclipai doctor` still do not expose a direct low-level `--mode` flag
@@ -348,10 +349,12 @@ provider default stays with it:
 npx paperclipai configure --section server
 ```
 
-When the mode moves from `local_trusted` to `authenticated`, `configure`
-prompts for the operator's email and password (confirmed) before saving the
-config. The headless form, usable at any time on the host while the database
-is reachable (embedded PostgreSQL must be running):
+Pick `Not sure yet` to require login while staying on loopback, or `Other
+devices, teammates, or a remote assistant` to also widen the bind. When the
+mode moves from `local_trusted` to `authenticated`, `configure` prompts for
+the operator's email and password (confirmed) before saving the config. The
+headless form, usable at any time on the host while the database is reachable
+(embedded PostgreSQL must be running):
 
 ```sh
 npx paperclipai auth set-operator-credentials --email you@example.com

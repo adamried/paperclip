@@ -90,16 +90,36 @@ Default onboarding remains interactive and flagless:
 pnpm paperclipai onboard
 ```
 
-Server prompt behavior:
+Server prompt behavior (identity first: the first question decides login, and
+only then where the server listens):
 
-1. quickstart `--yes` defaults to `server.bind=loopback` and therefore `local_trusted/private`
-2. advanced server setup asks reachability first:
-- `Trusted local` → `bind=loopback`, `local_trusted/private`
-- `Private network` → `bind=lan`, `authenticated/private`
-- `Tailnet` → `bind=tailnet`, `authenticated/private`
-- `Custom` → manual mode/exposure/host entry
-3. raw host entry is only required for the `Custom` path
+1. quickstart `--yes` keeps today's defaults: `server.bind=loopback` and
+   therefore `local_trusted/private`. `--yes --bind lan|tailnet` keeps the
+   authenticated presets. Nothing is prompted.
+2. advanced server setup asks **"How will you use Paperclip?"**:
+
+| Choice | Config |
+|---|---|
+| `Only on this computer` | `local_trusted/private`, `bind=loopback` |
+| `Other devices, teammates, or a remote assistant` | `authenticated/private`; a second question, "How will other devices reach it?", picks `bind=lan` (`Private network`) or `bind=tailnet` (`Tailnet`) |
+| `Not sure yet` | `authenticated/private`, `bind=loopback` |
+| `Advanced` | manual mode/exposure/host entry (the previous `Custom` path) |
+
+   `Only on this computer` shows: "You can enable login later. Your work stays
+   with your account when you do." (section 8.1). `Not sure yet` is the
+   identity-first default: login is required, the server listens on
+   `127.0.0.1` only, and `configure --section server` can widen the bind
+   later. Choosing login never changes the listening address; `Tailnet` with
+   no detected Tailscale address still falls back to loopback with the
+   existing warning.
+3. raw host entry is only required for the `Advanced` path
 4. explicit public URL is only required for `authenticated + public`
+5. when an authenticated choice is made on a fresh install, the CLI does not
+   attach credentials inline (there is no running database yet). It prints
+   the first-admin steps instead: start the server, then claim it in the
+   browser (section 8) or run `paperclipai auth bootstrap-ceo`; a database
+   that already ran without login keeps its operator with
+   `paperclipai auth set-operator-credentials --email <email>` (section 8.1).
 
 Examples:
 
@@ -109,7 +129,11 @@ npx paperclipai onboard --yes --bind lan
 npx paperclipai run --bind tailnet
 ```
 
-`configure --section server` follows the same interactive behavior.
+`configure --section server` follows the same interactive behavior, preselecting
+the choice that describes the current config. The preset builder
+(`buildPresetServerConfig` in `cli/src/config/server-bind.ts`) takes
+`{ bind, requireLogin }`; `requireLogin: false` is only accepted with
+`bind=loopback`.
 
 ## 5. Doctor UX Contract
 
@@ -281,7 +305,12 @@ For `authenticated/private`, Paperclip supports a browser-first setup path:
 3. choose `Claim this instance` on the setup screen
 
 That browser claim promotes the signed-in session user to the first instance
-admin and then falls through to normal onboarding. The endpoint is available
+admin and then falls through to normal onboarding. The setup screen
+(`BootstrapPendingPage`) carries the same explainer the CLI prints when login
+is chosen: login belongs to this instance, not to a hosted subscription, and
+claiming makes the signed-in account the first admin. It also names the two
+host-side commands (`auth bootstrap-ceo`, and `auth set-operator-credentials`
+for a database that already ran without login). The endpoint is available
 only to real browser session actors in `authenticated/private`; unauthenticated
 requests, agent keys, board API keys, and local implicit board actors are
 rejected.
@@ -312,8 +341,9 @@ An instance that started in `local_trusted` mode with a dedicated operator
 (section 6.1) does not go through either bootstrap path when login is enabled.
 The operator gains a password instead:
 
-1. `paperclipai configure --section server` and choose an authenticated
-   reachability (`Private network`, `Tailnet`, or `Custom` with
+1. `paperclipai configure --section server` and choose a usage that requires
+   login (`Not sure yet` keeps the bind on loopback; `Other devices,
+   teammates, or a remote assistant` also picks a bind; or `Advanced` with
    `authenticated`). When the mode moves from `local_trusted` to
    `authenticated`, the CLI prompts for the operator's email and password
    (confirmed). The email must be unique among `authUsers`.
