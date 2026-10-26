@@ -146,6 +146,19 @@ When running `authenticated` mode, if the only instance admin is `local-board`, 
 
 This prevents lockout when a user migrates from long-running local trusted usage to authenticated mode.
 
+The claim moves roles and memberships only. Operational references created in
+local mode (issues assigned to `local-board`, pending approvals addressed to
+it, per-user model-provider defaults, and so on) stay on `local-board` until
+the operator runs the host-authorized reconciliation command, which previews by
+default and applies in one transaction:
+
+```sh
+npx paperclipai auth reconcile-identity --from local-board --to <userId|email> [--apply] [--include-board-keys]
+```
+
+See `doc/CLI.md` ("Identity reconciliation after moving to authenticated mode")
+for what moves, what is only counted, and what must be re-authorized.
+
 ## 8. First Admin Setup For Fresh Authenticated Installs
 
 Fresh authenticated installs start in `bootstrap_pending` until the first

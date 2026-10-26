@@ -10,6 +10,7 @@ import { addAllowedHostname } from "./commands/allowed-hostname.js";
 import { heartbeatRun } from "./commands/heartbeat-run.js";
 import { runCommand } from "./commands/run.js";
 import { bootstrapCeoInvite } from "./commands/auth-bootstrap-ceo.js";
+import { reconcileIdentity } from "./commands/auth-reconcile-identity.js";
 import { dbBackupCommand } from "./commands/db-backup.js";
 import { registerEnvLabCommands } from "./commands/env-lab.js";
 import { registerContextCommands } from "./commands/client/context.js";
@@ -274,6 +275,23 @@ auth
   .option("--expires-hours <hours>", "Invite expiration window in hours", (value) => Number(value))
   .option("--base-url <url>", "Public base URL used to print invite link")
   .action(bootstrapCeoInvite);
+
+auth
+  .command("reconcile-identity")
+  .description(
+    "Move operational ownership from the local-board identity to an instance admin (dry run unless --apply)",
+  )
+  .option("-c, --config <path>", "Path to config file")
+  .option("-d, --data-dir <path>", DATA_DIR_OPTION_HELP)
+  .requiredOption("--from <userId>", "Source user id (only local-board is supported)")
+  .requiredOption("--to <userId|email>", "Target user id or email; must already hold instance_admin")
+  .option("--apply", "Write the changes in one transaction (default: preview only)", false)
+  .option("--include-board-keys", "Also move the source user's active board API keys", false)
+  .option("--db-url <url>", "Database connection string (defaults to config / DATABASE_URL)")
+  .option("--json", "Print the report as JSON", false)
+  .action(async (opts) => {
+    await reconcileIdentity(opts);
+  });
 
 registerClientAuthCommands(auth);
 
