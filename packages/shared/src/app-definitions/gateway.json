@@ -9,7 +9,10 @@
   "branding": {
     "logoUrl": "/brands/apps/api-key-generic.svg"
   },
-  "urlPatterns": [],
+  "urlPatterns": [
+    "http://localhost:4000/*",
+    "http://127.0.0.1:4000/*"
+  ],
   "methods": [
     {
       "key": "ai-api_key",

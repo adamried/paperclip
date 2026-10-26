@@ -10,6 +10,9 @@ import {
   aiConnectionLoginIntentSchema,
   localAiConnectionSchema,
   localAiLoginStartSchema,
+  localAiLoginCodeSchema,
+  localAiLoginImportSchema,
+  forkUpdateSyncRequestSchema,
   emailEndpointSetupSchema,
   emailConnectionSchema,
   emailSendSchema,
@@ -1298,6 +1301,8 @@ const BOARD_ONLY_OPERATIONS = new Set([
   "POST /api/companies/{companyId}/ai-connections/local/attempts",
   "POST /api/companies/{companyId}/ai-connections/local/check",
   "DELETE /api/companies/{companyId}/ai-connections/local/attempts/{sessionId}",
+  "POST /api/companies/{companyId}/ai-connections/local/attempts/{sessionId}/code",
+  "POST /api/companies/{companyId}/ai-connections/local/attempts/{sessionId}/import",
   "PUT /api/companies/{companyId}/ai-connections/default",
   "GET /api/companies/{companyId}/ai-connections/{connectionId}/active-runs",
   "GET /api/companies/{companyId}/ai-connections/login/{sessionId}",
@@ -1496,6 +1501,10 @@ const INSTANCE_ADMIN_OPERATIONS = new Set([
   "POST /api/companies",
   "POST /api/plugins/install",
   "POST /api/instance/database-backups",
+  "GET /api/instance/fork-update/status",
+  "POST /api/instance/fork-update/sync",
+  "POST /api/instance/fork-update/apply",
+  "GET /api/instance/runtimes",
   "POST /api/admin/users/{userId}/promote-instance-admin",
   "POST /api/admin/users/{userId}/demote-instance-admin",
   "PUT /api/admin/users/{userId}/company-access",
@@ -8594,6 +8603,57 @@ registry.registerPath({
   responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
 });
 
+// ─── Instance fork updates ───────────────────────────────────────────────────
+// Instance admins only, and never on cloud-managed instances, where the
+// platform owns the deployed code (403 with code `fork_update_platform_managed`).
+
+registry.registerPath({
+  method: "get",
+  path: "/api/instance/fork-update/status",
+  tags: ["instance"],
+  summary: "Get the fork update status for this checkout (`refresh=1` re-reads the remote)",
+  request: {
+    query: z.object({ refresh: z.enum(["1", "true"]).optional() }),
+  },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/instance/fork-update/sync",
+  tags: ["instance"],
+  summary: "Dispatch a fork sync against the upstream release",
+  request: { body: jsonBody(forkUpdateSyncRequestSchema) },
+  responses: {
+    202: { description: "Fork sync dispatched" },
+    400: r.badRequest,
+    401: r.unauthorized,
+    403: r.forbidden,
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/instance/fork-update/apply",
+  tags: ["instance"],
+  summary: "Start applying the synced fork update to this checkout",
+  responses: {
+    202: { description: "Fork update apply started" },
+    401: r.unauthorized,
+    403: r.forbidden,
+  },
+});
+
+// ─── Instance runtime inventory ──────────────────────────────────────────────
+
+registry.registerPath({
+  method: "get",
+  path: "/api/instance/runtimes",
+  tags: ["instance"],
+  summary: "List which provider CLI build each local adapter runs on",
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
+});
+
 // ─── LLM text endpoints ───────────────────────────────────────────────────────
 
 registry.registerPath({
@@ -11215,6 +11275,20 @@ registerCurrentRoute({
   path: "/api/companies/{companyId}/ai-connections/local/attempts/{sessionId}",
   tags: ["ai-connections"], summary: "Cancel an owned local subscription sign-in",
   responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden, 404: r.notFound },
+});
+registerCurrentRoute({
+  method: "post",
+  path: "/api/companies/{companyId}/ai-connections/local/attempts/{sessionId}/code",
+  tags: ["ai-connections"], summary: "Submit the provider's browser code to an owned assisted local sign-in",
+  body: localAiLoginCodeSchema,
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound, 422: r.unprocessable },
+});
+registerCurrentRoute({
+  method: "post",
+  path: "/api/companies/{companyId}/ai-connections/local/attempts/{sessionId}/import",
+  tags: ["ai-connections"], summary: "Import a pasted provider credential into an owned local sign-in",
+  body: localAiLoginImportSchema,
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound, 422: r.unprocessable },
 });
 registerCurrentRoute({
   method: "post",
