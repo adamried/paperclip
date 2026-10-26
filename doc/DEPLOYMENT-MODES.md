@@ -135,14 +135,30 @@ This is required because user assignment paths validate active membership for `a
 
 ## 7. Local Trusted -> Authenticated Claim Flow
 
-When running `authenticated` mode, if the only instance admin is `local-board`, Paperclip emits a startup warning with a one-time high-entropy claim URL.
+When running `authenticated` mode, if the only instance admin is `local-board`, Paperclip issues a one-time high-entropy claim challenge and prints its URL in the startup warning.
 
 - URL format: `/board-claim/<token>?code=<code>`
 - intended use: signed-in human claims board ownership
-- claim action:
+- claim action (one locked transaction, same lock as the first-admin claim):
   - promotes current signed-in user to `instance_admin`
   - demotes `local-board` admin role
   - ensures active owner membership for the claiming user across existing companies
+  - marks the challenge as claimed, so two concurrent valid claims produce exactly one winner and the loser receives `409`
+
+Challenge persistence:
+
+- the challenge is stored in `instance_settings.general.boardClaimChallenge` as SHA-256 hashes of the token and code plus `expiresAt` / `claimedAt` / `claimedByUserId`; plaintext is never written
+- a restart reuses an unexpired, unclaimed challenge instead of reissuing, so a URL printed before the restart still works; multi-process deployments agree on the same record
+- only the process that minted the challenge knows the plaintext, so a restarted server prints no URL. Run `paperclipai auth board-claim-url` on the host to issue a fresh challenge (superseding the outstanding one) and print its URL. Host (database) authority is the gate.
+- an expired challenge returns `409` on claim; startup or the CLI issues a new one
+
+Discoverability:
+
+- `GET /api/board-claim/status` returns `{ pending: boolean }` to signed-in session actors in `authenticated` mode. It carries no token or code.
+- while pending, every signed-in user sees a persistent banner: "This instance still has its local placeholder as the only admin. An operator must run `paperclipai auth board-claim-url` on the host and open the link while signed in here."
+- the claim response includes `reconciliationPreview` (currently `null`; the identity-reconciliation summary lands with Spec 1 of `doc/plans/2026-10-26-operator-identity-and-board-ownership.md`)
+
+The Board is the set of users holding `instance_admin`, excluding the `local-board` agent sentinel. `GET /api/admin/board` lists it, the Instance Access page manages it (add via user search and promote, remove via demote; removing the last member is refused with `409`), and the org chart lists its members directly under "The Board". `local-board` is never offered as a Board member.
 
 This prevents lockout when a user migrates from long-running local trusted usage to authenticated mode.
 

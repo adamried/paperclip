@@ -648,7 +648,13 @@ export function OrgChart({ orgTree: providedOrgTree, agents: providedAgents, emb
                         </span>
                       )}
                       <span className="text-(length:--text-micro) text-muted-foreground leading-tight mt-0.5">
-                        {isBoard ? "Owns the company" : node.status === "inactive" ? "Manager (inactive member)" : "Manager"}
+                        {isBoard
+                          ? "Owns the company"
+                          : node.role === "board"
+                            ? "Board member"
+                            : node.status === "inactive"
+                              ? "Manager (inactive member)"
+                              : "Manager"}
                       </span>
                     </div>
                   </div>

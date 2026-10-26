@@ -932,6 +932,15 @@ npx paperclipai auth revoke-current
 
 `--token <challenge-secret>` is still supported for compatibility, but `--token-env` avoids putting challenge secrets in shell history or process arguments.
 
+Host-authority bootstrap commands (run on the Paperclip host; they talk to the database directly):
+
+```sh
+npx paperclipai auth bootstrap-ceo [--force] [--expires-hours <hours>] [--base-url <url>]
+npx paperclipai auth board-claim-url [--expires-hours <hours>] [--base-url <url>]
+```
+
+`auth board-claim-url` is for a legacy `authenticated` instance whose only instance admin is still the `local-board` placeholder (the UI shows a banner in that state). It issues a fresh board-claim challenge, persists only its hashes in `instance_settings.general.boardClaimChallenge`, and prints the one-time URL. Any earlier challenge becomes void. The Board itself (every `instance_admin` user except the sentinel) is listed by `GET /api/admin/board` and managed on the Instance Access page.
+
 ## Instance Settings Commands
 
 ```sh

@@ -15,7 +15,7 @@ function createInviteToken() {
   return `pcp_bootstrap_${randomBytes(24).toString("hex")}`;
 }
 
-function resolveDbUrl(configPath?: string, explicitDbUrl?: string) {
+export function resolveDbUrl(configPath?: string, explicitDbUrl?: string) {
   if (explicitDbUrl) return explicitDbUrl;
   const config = readConfig(configPath);
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
@@ -29,7 +29,7 @@ function resolveDbUrl(configPath?: string, explicitDbUrl?: string) {
   return null;
 }
 
-function resolveBaseUrl(configPath?: string, explicitBaseUrl?: string) {
+export function resolveBaseUrl(configPath?: string, explicitBaseUrl?: string) {
   if (explicitBaseUrl) return explicitBaseUrl.replace(/\/+$/, "");
   const fromEnv =
     process.env.PAPERCLIP_PUBLIC_URL ??

@@ -10,6 +10,7 @@ import { addAllowedHostname } from "./commands/allowed-hostname.js";
 import { heartbeatRun } from "./commands/heartbeat-run.js";
 import { runCommand } from "./commands/run.js";
 import { bootstrapCeoInvite } from "./commands/auth-bootstrap-ceo.js";
+import { boardClaimUrl } from "./commands/auth-board-claim-url.js";
 import { dbBackupCommand } from "./commands/db-backup.js";
 import { registerEnvLabCommands } from "./commands/env-lab.js";
 import { registerContextCommands } from "./commands/client/context.js";
@@ -274,6 +275,17 @@ auth
   .option("--expires-hours <hours>", "Invite expiration window in hours", (value) => Number(value))
   .option("--base-url <url>", "Public base URL used to print invite link")
   .action(bootstrapCeoInvite);
+
+auth
+  .command("board-claim-url")
+  .description(
+    "Print a board-claim URL for a legacy instance whose only admin is the local-board placeholder (issues a fresh challenge)",
+  )
+  .option("-c, --config <path>", "Path to config file")
+  .option("-d, --data-dir <path>", DATA_DIR_OPTION_HELP)
+  .option("--expires-hours <hours>", "Challenge expiration window in hours (default 24)", (value) => Number(value))
+  .option("--base-url <url>", "Public base URL used to print the claim link")
+  .action(boardClaimUrl);
 
 registerClientAuthCommands(auth);
 

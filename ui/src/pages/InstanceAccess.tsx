@@ -1,15 +1,27 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Shield, ShieldCheck } from "lucide-react";
-import { accessApi } from "@/api/access";
+import { Landmark, Shield, ShieldCheck, UserMinus, UserPlus } from "lucide-react";
+import { accessApi, type BoardMember } from "@/api/access";
 import { ApiError } from "@/api/client";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { Card } from "@/components/ui/card";
+import { Identity } from "@/components/Identity";
+import { InlineBanner } from "@/components/InlineBanner";
+import { BOARD_CLAIM_PENDING_COPY } from "@/components/BoardClaimPendingBanner";
 import { companyDirectoryQueryOptions, useAccountIdentity } from "@/api/companies-query";
 import { useToast } from "@/context/ToastContext";
 import { queryKeys } from "@/lib/queryKeys";
+
+function boardMemberLabel(member: BoardMember) {
+  return member.name || member.email || member.id;
+}
+
+function errorMessage(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
 
 export function InstanceAccess() {
   const { userId: accountUserId, settled: accountSettled } = useAccountIdentity();
@@ -31,6 +43,52 @@ export function InstanceAccess() {
   const usersQuery = useQuery({
     queryKey: queryKeys.access.adminUsers(search),
     queryFn: () => accessApi.searchAdminUsers(search),
+  });
+
+  const boardQuery = useQuery({
+    queryKey: queryKeys.access.boardMembers,
+    queryFn: () => accessApi.listBoardMembers(),
+    enabled: usersQuery.isSuccess,
+  });
+  const [boardSearch, setBoardSearch] = useState("");
+  const [boardActionError, setBoardActionError] = useState<string | null>(null);
+  const boardCandidatesQuery = useQuery({
+    queryKey: queryKeys.access.adminUsers(boardSearch),
+    queryFn: () => accessApi.searchAdminUsers(boardSearch),
+    enabled: boardSearch.trim().length > 0,
+  });
+  const boardCandidates = useMemo(
+    () => (boardCandidatesQuery.data ?? []).filter((user) => !user.isInstanceAdmin).slice(0, 8),
+    [boardCandidatesQuery.data],
+  );
+
+  const invalidateBoardViews = async () => {
+    await queryClient.invalidateQueries({ queryKey: queryKeys.access.boardMembers });
+    await queryClient.invalidateQueries({ queryKey: ["access", "admin-users"] });
+    if (selectedUserId) {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.access.userCompanyAccess(selectedUserId) });
+    }
+  };
+
+  const addBoardMemberMutation = useMutation({
+    mutationFn: (userId: string) => accessApi.promoteInstanceAdmin(userId),
+    onSuccess: async () => {
+      setBoardActionError(null);
+      setBoardSearch("");
+      await invalidateBoardViews();
+      pushToast({ title: "Board member added", tone: "success" });
+    },
+    onError: (error) => setBoardActionError(errorMessage(error, "Failed to add Board member.")),
+  });
+
+  const removeBoardMemberMutation = useMutation({
+    mutationFn: (userId: string) => accessApi.demoteInstanceAdmin(userId),
+    onSuccess: async () => {
+      setBoardActionError(null);
+      await invalidateBoardViews();
+      pushToast({ title: "Board member removed", tone: "success" });
+    },
+    onError: (error) => setBoardActionError(errorMessage(error, "Failed to remove Board member.")),
   });
 
   const companiesQuery = useQuery({
@@ -84,11 +142,11 @@ export function InstanceAccess() {
       return accessApi.demoteInstanceAdmin(selectedUserId);
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.access.adminUsers(search) });
-      if (selectedUserId) {
-        await queryClient.invalidateQueries({ queryKey: queryKeys.access.userCompanyAccess(selectedUserId) });
-      }
+      await invalidateBoardViews();
       pushToast({ title: "Instance role updated", tone: "success" });
+    },
+    onError: (error) => {
+      pushToast({ title: errorMessage(error, "Failed to update instance role."), tone: "error" });
     },
   });
 
@@ -126,6 +184,105 @@ export function InstanceAccess() {
           Search users, manage instance-admin status, and control which organizations they can access.
         </p>
       </div>
+
+      <Card className="block space-y-4 p-5">
+        <div className="flex items-center gap-2">
+          <Landmark className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-sm font-semibold">The Board</h2>
+        </div>
+        <p className="max-w-3xl text-sm text-muted-foreground">
+          Board members administer the whole instance, can create companies, and are the fallback addressee for
+          approvals that name no one. Agents can report to Board members but cannot be Board members. Company-level
+          roles are managed per company.
+        </p>
+
+        {boardQuery.data?.legacySentinelHoldsAdmin ? (
+          <InlineBanner tone="warning" compact title="Local placeholder still holds instance admin">
+            {BOARD_CLAIM_PENDING_COPY}
+          </InlineBanner>
+        ) : null}
+
+        {boardQuery.isLoading ? (
+          <div className="text-sm text-muted-foreground">Loading the Board…</div>
+        ) : boardQuery.error ? (
+          <div className="text-sm text-destructive">{errorMessage(boardQuery.error, "Failed to load the Board.")}</div>
+        ) : (
+          <ul className="space-y-2" aria-label="Board members">
+            {(boardQuery.data?.members ?? []).map((member) => {
+              const isSelf = member.id === accountUserId;
+              const isLastMember = (boardQuery.data?.members.length ?? 0) <= 1;
+              return (
+                <li
+                  key={member.id}
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border px-3 py-2"
+                >
+                  <div className="flex min-w-0 items-center gap-3">
+                    <Identity name={boardMemberLabel(member)} avatarUrl={member.image} />
+                    <span className="truncate text-sm text-muted-foreground">{member.email ?? member.id}</span>
+                    {member.isOperator === true ? <Badge variant="secondary">Operator</Badge> : null}
+                    {isSelf ? <Badge variant="outline">You</Badge> : null}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => removeBoardMemberMutation.mutate(member.id)}
+                    disabled={removeBoardMemberMutation.isPending || isLastMember}
+                    title={isLastMember ? "The Board must keep at least one member." : undefined}
+                  >
+                    <UserMinus className="h-4 w-4" />
+                    Remove from Board
+                  </Button>
+                </li>
+              );
+            })}
+            {boardQuery.data && boardQuery.data.members.length === 0 ? (
+              <li className="text-sm text-muted-foreground">No Board members yet.</li>
+            ) : null}
+          </ul>
+        )}
+
+        <div className="space-y-2">
+          <label className="block space-y-2 text-sm">
+            <span className="font-medium">Add a Board member</span>
+            <input
+              className="w-full rounded-md border border-border bg-background px-3 py-2"
+              value={boardSearch}
+              onChange={(event) => setBoardSearch(event.target.value)}
+              placeholder="Search existing users by name or email"
+            />
+          </label>
+          {boardSearch.trim().length > 0 ? (
+            boardCandidatesQuery.isLoading ? (
+              <div className="text-sm text-muted-foreground">Searching…</div>
+            ) : boardCandidates.length === 0 ? (
+              <div className="text-sm text-muted-foreground">No matching users who are not already on the Board.</div>
+            ) : (
+              <ul className="space-y-2">
+                {boardCandidates.map((user) => (
+                  <li
+                    key={user.id}
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border px-3 py-2"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium">{user.name || user.email || user.id}</div>
+                      <div className="truncate text-sm text-muted-foreground">{user.email || user.id}</div>
+                    </div>
+                    <Button
+                      size="sm"
+                      onClick={() => addBoardMemberMutation.mutate(user.id)}
+                      disabled={addBoardMemberMutation.isPending}
+                    >
+                      <UserPlus className="h-4 w-4" />
+                      Add to Board
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )
+          ) : null}
+          {boardActionError ? <p className="text-sm text-destructive">{boardActionError}</p> : null}
+        </div>
+      </Card>
 
       <div className="grid gap-6 lg:grid-cols-(--gtc-34)">
         <Card className="block space-y-4 p-4">
@@ -192,7 +349,7 @@ export function InstanceAccess() {
                   onClick={() => setAdminMutation.mutate(!(selectedUser?.isInstanceAdmin ?? false))}
                   disabled={setAdminMutation.isPending}
                 >
-                  {selectedUser?.isInstanceAdmin ? "Remove instance admin" : "Promote to instance admin"}
+                  {selectedUser?.isInstanceAdmin ? "Remove from Board" : "Add to Board (instance admin)"}
                 </Button>
               </div>
 

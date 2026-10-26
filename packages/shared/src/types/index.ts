@@ -973,6 +973,9 @@ export type {
   JoinRequestRecord,
   InstanceUserRoleGrant,
   AdminUserDirectoryEntry,
+  BoardMember,
+  BoardMembersResponse,
+  BoardClaimPendingStatus,
   UserCompanyAccessEntry,
   UserCompanyAccessResponse,
 } from "./access.js";

@@ -156,6 +156,37 @@ export interface AdminUserDirectoryEntry extends AccessUserProfile {
   activeCompanyMembershipCount: number;
 }
 
+/**
+ * One seat on the Board: a user holding `instance_admin`. The agent-posting
+ * sentinel (`local-board`) is never listed here.
+ */
+export interface BoardMember extends AccessUserProfile {
+  /**
+   * Whether this member is the recorded operator
+   * (`instance_settings.general.operatorUserId`). `null` when the instance
+   * has not recorded an operator yet, so the UI can say "unknown" instead of
+   * "no".
+   */
+  isOperator: boolean | null;
+  memberSince: Date | string;
+}
+
+export interface BoardMembersResponse {
+  members: BoardMember[];
+  /** The recorded operator's user id, or `null` when none is recorded. */
+  operatorUserId: string | null;
+  /**
+   * Legacy marker: the `local-board` sentinel still holds `instance_admin`.
+   * The Board page shows a single warning row pointing at the claim flow.
+   */
+  legacySentinelHoldsAdmin: boolean;
+}
+
+/** `GET /api/board-claim/status`: deliberately carries no secret material. */
+export interface BoardClaimPendingStatus {
+  pending: boolean;
+}
+
 export interface UserCompanyAccessEntry extends CompanyMembership {
   principalType: "user";
   companyName: string | null;

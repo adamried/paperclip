@@ -7,16 +7,30 @@ import { boardMutationGuard } from "../middleware/board-mutation-guard.js";
 import { errorHandler } from "../middleware/index.js";
 
 const claimFirstInstanceAdminMock = vi.hoisted(() => vi.fn());
+const boardClaimMock = vi.hoisted(() => ({
+  claimBoardOwnership: vi.fn(),
+  inspectBoardClaimChallenge: vi.fn(),
+  isBoardClaimPending: vi.fn(),
+}));
+const listBoardMembersMock = vi.hoisted(() => vi.fn());
 const accessServiceMock = vi.hoisted(() => ({
   isInstanceAdmin: vi.fn(),
   canUser: vi.fn(),
   hasPermission: vi.fn(),
   ensureMembership: vi.fn(),
   setPrincipalGrants: vi.fn(),
+  demoteInstanceAdmin: vi.fn(),
+  promoteInstanceAdmin: vi.fn(),
 }));
 
 vi.mock("../first-admin-claim.js", () => ({
   claimFirstInstanceAdmin: claimFirstInstanceAdminMock,
+}));
+
+vi.mock("../board-claim.js", () => boardClaimMock);
+
+vi.mock("../services/board-members.js", () => ({
+  listBoardMembers: listBoardMembersMock,
 }));
 
 vi.mock("../services/index.js", () => ({
@@ -227,5 +241,145 @@ describe("bootstrap invite first-admin acceptance", () => {
 
     expect(res.status).toBe(409);
     expect(res.body.error).toContain("already claimed");
+  });
+});
+
+describe("GET /board-claim/status", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    boardClaimMock.isBoardClaimPending.mockResolvedValue(true);
+  });
+
+  it("returns only the pending flag to a signed-in session actor", async () => {
+    const res = await request(createApp({})).get("/api/board-claim/status");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ pending: true });
+    expect(Object.keys(res.body)).toEqual(["pending"]);
+    expect(JSON.stringify(res.body)).not.toMatch(/token|code|url/i);
+  });
+
+  it("is not exposed in local trusted mode", async () => {
+    const res = await request(createApp({ deploymentMode: "local_trusted" })).get("/api/board-claim/status");
+
+    expect(res.status).toBe(404);
+    expect(boardClaimMock.isBoardClaimPending).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ type: "none", source: "none" }, "anonymous caller"],
+    [{ type: "agent", source: "agent_key", agentId: "agent-1" }, "agent key"],
+    [{ type: "board", source: "board_key", userId: "user-1" }, "board API key"],
+    [{ type: "board", source: "local_implicit", userId: "local-board" }, "local implicit board"],
+  ])("rejects %s", async (actor) => {
+    const res = await request(createApp({ actor })).get("/api/board-claim/status");
+
+    expect(res.status).toBe(401);
+    expect(boardClaimMock.isBoardClaimPending).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /board-claim/:token/claim", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns the winner with a reconciliation preview placeholder", async () => {
+    boardClaimMock.claimBoardOwnership.mockResolvedValueOnce({
+      status: "claimed",
+      claimedByUserId: "user-1",
+      reconciliationPreview: null,
+    });
+
+    const res = await request(createApp({})).post("/api/board-claim/tok/claim").send({ code: "c0de" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ claimed: true, userId: "user-1", reconciliationPreview: null });
+    expect(boardClaimMock.claimBoardOwnership).toHaveBeenCalledWith(expect.anything(), {
+      token: "tok",
+      code: "c0de",
+      userId: "user-1",
+    });
+  });
+
+  it("conflicts for the loser of a race and for an expired challenge", async () => {
+    boardClaimMock.claimBoardOwnership.mockResolvedValueOnce({
+      status: "already_claimed",
+      claimedByUserId: "user-2",
+      reconciliationPreview: null,
+    });
+    const lost = await request(createApp({})).post("/api/board-claim/tok/claim").send({ code: "c0de" });
+    expect(lost.status).toBe(409);
+    expect(lost.body.error).toContain("already been claimed");
+
+    boardClaimMock.claimBoardOwnership.mockResolvedValueOnce({
+      status: "expired",
+      claimedByUserId: null,
+      reconciliationPreview: null,
+    });
+    const expired = await request(createApp({})).post("/api/board-claim/tok/claim").send({ code: "c0de" });
+    expect(expired.status).toBe(409);
+    expect(expired.body.error).toContain("paperclipai auth board-claim-url");
+  });
+
+  it("requires a signed-in browser session", async () => {
+    const res = await request(createApp({ actor: { type: "board", source: "board_key", userId: "user-1" } }))
+      .post("/api/board-claim/tok/claim")
+      .send({ code: "c0de" });
+
+    expect(res.status).toBe(401);
+    expect(boardClaimMock.claimBoardOwnership).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /admin/board", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listBoardMembersMock.mockResolvedValue({
+      members: [{ id: "user-1", name: "Dana", email: "dana@example.test", image: null, isOperator: null }],
+      operatorUserId: null,
+      legacySentinelHoldsAdmin: false,
+    });
+  });
+
+  it("returns the Board to an instance admin", async () => {
+    accessServiceMock.isInstanceAdmin.mockResolvedValue(true);
+
+    const res = await request(createApp({})).get("/api/admin/board");
+
+    expect(res.status).toBe(200);
+    expect(res.body.members.map((member: { id: string }) => member.id)).toEqual(["user-1"]);
+    expect(res.body.legacySentinelHoldsAdmin).toBe(false);
+  });
+
+  it("is forbidden for a signed-in non-admin", async () => {
+    accessServiceMock.isInstanceAdmin.mockResolvedValue(false);
+
+    const res = await request(createApp({})).get("/api/admin/board");
+
+    expect(res.status).toBe(403);
+    expect(listBoardMembersMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses to seat the agent sentinel on the Board", async () => {
+    accessServiceMock.isInstanceAdmin.mockResolvedValue(true);
+
+    const res = await request(createApp({})).post("/api/admin/users/local-board/promote-instance-admin").send({});
+
+    expect(res.status).toBe(409);
+    expect(accessServiceMock.promoteInstanceAdmin).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the last-member refusal from the access service as 409", async () => {
+    accessServiceMock.isInstanceAdmin.mockResolvedValue(true);
+    const { conflict } = await import("../errors.js");
+    accessServiceMock.demoteInstanceAdmin.mockRejectedValueOnce(
+      conflict("The Board must keep at least one member.", { code: "board_last_member" }),
+    );
+
+    const res = await request(createApp({})).post("/api/admin/users/user-1/demote-instance-admin").send({});
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain("at least one member");
   });
 });

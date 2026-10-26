@@ -28,6 +28,7 @@ import {
   type PatchInstanceExperimentalSettings,
 } from "@paperclipai/shared";
 import {
+  BOARD_CLAIM_CHALLENGE_SETTINGS_KEY,
   INSTANCE_FEATURE_CATALOG,
   applyOperatorGeneralDefaults,
   stripOperatorGeneralEchoes,
@@ -38,6 +39,24 @@ import { getOperatorSettingDefaults } from "./setting-defaults.js";
 
 const DEFAULT_SINGLETON_KEY = "default";
 const instanceGeneralSettingsStorageSchema = instanceGeneralSettingsSchema.strip();
+/**
+ * Keys in `instance_settings.general` that the server writes for itself and
+ * that are not part of the user-facing general settings contract. They are
+ * never returned by the settings API or accepted from a patch, but a user
+ * settings write must carry them through untouched instead of stripping them
+ * with the unknown-key cleanup below.
+ */
+const SERVER_MANAGED_GENERAL_KEYS = [BOARD_CLAIM_CHALLENGE_SETTINGS_KEY] as const;
+
+function pickServerManagedGeneralKeys(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== "object") return {};
+  const source = raw as Record<string, unknown>;
+  const preserved: Record<string, unknown> = {};
+  for (const key of SERVER_MANAGED_GENERAL_KEYS) {
+    if (source[key] !== undefined) preserved[key] = source[key];
+  }
+  return preserved;
+}
 const instanceExperimentalSettingsStorageSchema = instanceExperimentalSettingsSchema.strip();
 const TRUTHY_RUNTIME_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
 
@@ -540,7 +559,7 @@ export function instanceSettingsService(db: Db, options: InstanceSettingsService
       const [updated] = await db
         .update(instanceSettings)
         .set({
-          general: { ...nextGeneral },
+          general: { ...pickServerManagedGeneralKeys(current.general), ...nextGeneral },
           updatedAt: now,
         })
         .where(eq(instanceSettings.id, current.id))

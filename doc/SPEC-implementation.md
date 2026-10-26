@@ -555,6 +555,9 @@ Detailed ownership, execution, blocker, active-run watchdog, crash-recovery, and
 - Session-based auth for human operator
 - Board has full read/write across all companies in deployment
 - Every board mutation writes to `activity_log`
+- Identity invariants (see `doc/plans/2026-10-26-operator-identity-and-board-ownership.md`):
+  - The Board is the set of users holding `instance_admin`, excluding the `local-board` agent-posting sentinel. Agents are never Board members. `GET /api/admin/board` lists it; the Board must keep at least one member (removing the last is refused with `409`).
+  - A legacy `authenticated` instance whose only `instance_admin` is `local-board` is claimed through the hash-persisted board-claim challenge (`instance_settings.general.boardClaimChallenge`), issued at startup or by `paperclipai auth board-claim-url`, with exactly one winner under concurrency.
 
 ## 9.2 Agent Auth
 
