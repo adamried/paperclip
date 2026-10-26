@@ -368,9 +368,11 @@ function canCreateBootstrapInviteImmediately(config: Pick<PaperclipConfig, "data
 /**
  * What an authenticated instance needs before anyone can sign in. Printed
  * instead of attaching credentials inline: a fresh install has no running
- * database yet, so the first admin is created once the server is up. Login
- * belongs to this instance, not to a hosted subscription
- * (doc/DEPLOYMENT-MODES.md sections 8 and 8.1).
+ * database yet, so the first admin is created once the server is up. The
+ * host-side command creates the operator with its login on a fresh install
+ * and attaches a login to the existing operator on a database that already
+ * ran without login. Login belongs to this instance, not to a hosted
+ * subscription (doc/DEPLOYMENT-MODES.md sections 8 and 8.1).
  */
 export function authenticatedFirstAdminGuidance(
   server: Pick<PaperclipConfig["server"], "exposure" | "bind" | "customBindHost" | "host" | "port">,
@@ -380,19 +382,17 @@ export function authenticatedFirstAdminGuidance(
     `Listening address is unchanged by that choice: ${describeServerBinding(server)}.`,
     "",
     `After ${pc.cyan("paperclipai run")}, create the first admin one of these ways:`,
+    `  - On the host, create the operator account with its login (no browser step):`,
+    `    ${pc.cyan("paperclipai auth set-operator-credentials --email <email>")} while the server is running.`,
+    "    On a database that already ran without login, the same command keeps its operator and attaches the login.",
   ];
   if (server.exposure === "private") {
     lines.push(
-      "  - Open Paperclip in a browser, sign in or create an account, and choose Claim this instance.",
+      "  - Or open Paperclip in a browser, sign in or create an account, and choose Claim this instance.",
       "    The signed-in account becomes the first admin.",
     );
   }
-  lines.push(
-    `  - Or print a one-time first-admin invite URL: ${pc.cyan("paperclipai auth bootstrap-ceo")}`,
-    "",
-    "Did this database already run without login? Keep its operator account instead of creating a new one:",
-    `  ${pc.cyan("paperclipai auth set-operator-credentials --email <email>")} while the server is running.`,
-  );
+  lines.push(`  - Or print a one-time first-admin invite URL: ${pc.cyan("paperclipai auth bootstrap-ceo")}`);
   return lines;
 }
 
@@ -677,10 +677,11 @@ export async function onboard(opts: OnboardOptions): Promise<void> {
     p.log.step(pc.bold("Server"));
     ({ server, auth } = await promptServer({ currentServer: server, currentAuth: auth }));
     if (server.deploymentMode === "authenticated") {
-      // A fresh install has no operator yet (the first admin comes from the
-      // browser setup screen or `auth bootstrap-ceo`). An instance that already
-      // ran in local_trusted mode keeps its operator: once the server is up,
-      // `auth set-operator-credentials` attaches a login to that account.
+      // A fresh install has no operator yet and no running database to create
+      // one in. Once the server is up, `auth set-operator-credentials` creates
+      // the operator with its login (or, on an instance that already ran in
+      // local_trusted mode, attaches a login to the existing operator); the
+      // browser setup screen and `auth bootstrap-ceo` remain the alternatives.
       p.note(authenticatedFirstAdminGuidance(server).join("\n"), "First admin");
     }
 

@@ -296,4 +296,83 @@ describeEmbeddedPostgres("operator identity", () => {
       tempDb = null;
     },
   );
+
+  it(
+    "adopts an operator the CLI records after startup, so health reports ready and dedicated without a restart",
+    async () => {
+      tempDb = await startEmbeddedPostgresTestDatabase("paperclip-operator-adopt-");
+      const db = createDb(tempDb.connectionString);
+      await ensureOperatorIdentity(db, { deploymentMode: "authenticated", instanceId: "auth-inst" });
+      expect(getOperatorIdentity().kind).toBe("none");
+
+      const app = express();
+      app.use((req, _res, next) => {
+        (req as any).actor = { type: "none", source: "none" };
+        next();
+      });
+      app.use(
+        "/api/health",
+        healthRoutes(db, {
+          deploymentMode: "authenticated",
+          deploymentExposure: "private",
+          authReady: true,
+          companyDeletionEnabled: true,
+          runtimeEnv: {},
+        }),
+      );
+      app.use(errorHandler);
+
+      const pending = await request(app).get("/api/health");
+      expect(pending.status).toBe(200);
+      expect(pending.body).toMatchObject({ bootstrapStatus: "bootstrap_pending", operatorIdentity: "none" });
+
+      // A browser claim makes an admin but records no operator: ready, still none.
+      const claimerId = randomUUID();
+      const now = new Date();
+      await db.insert(authUsers).values({
+        id: claimerId,
+        name: "Claimer",
+        email: "claimer@example.com",
+        emailVerified: true,
+        image: null,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await db.insert(instanceUserRoles).values({ userId: claimerId, role: "instance_admin" });
+      const claimed = await request(app).get("/api/health");
+      expect(claimed.body).toMatchObject({ bootstrapStatus: "ready", operatorIdentity: "none" });
+      expect(getOperatorIdentity().kind).toBe("none");
+
+      // `paperclipai auth set-operator-credentials` on a fresh install: the
+      // operator row, its role, and the record, written while the server runs.
+      await db.delete(instanceUserRoles).where(eq(instanceUserRoles.userId, claimerId));
+      await db.delete(authUsers).where(eq(authUsers.id, claimerId));
+      const operatorId = randomUUID();
+      await db.insert(authUsers).values({
+        id: operatorId,
+        name: "Ada",
+        email: "founder@example.com",
+        emailVerified: false,
+        image: null,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await db.insert(instanceUserRoles).values({ userId: operatorId, role: "instance_admin" });
+      await instanceSettingsService(db).recordOperatorUserId(operatorId);
+
+      const ready = await request(app).get("/api/health");
+      expect(ready.status).toBe(200);
+      expect(ready.body).toMatchObject({ bootstrapStatus: "ready", operatorIdentity: "dedicated" });
+      expect(getOperatorIdentity()).toMatchObject({
+        kind: "dedicated",
+        userId: operatorId,
+        userName: "Ada",
+        userEmail: "founder@example.com",
+        deploymentMode: "authenticated",
+      });
+
+      await tempDb.cleanup();
+      tempDb = null;
+    },
+  );
 });

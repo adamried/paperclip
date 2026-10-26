@@ -53,8 +53,9 @@ function CliFallback({ hasActiveInvite = false }: { hasActiveInvite?: boolean })
 {BOOTSTRAP_FALLBACK_COMMAND}
       </pre>
       <p className="mt-3 text-sm text-muted-foreground">
-        Did this database already run without login? Keep its existing operator account instead of creating a
-        new admin:
+        Or create the operator account and its login directly on the host. It becomes the first admin, so no
+        browser claim is needed; on a database that already ran without login it keeps the existing operator
+        instead of creating a new admin:
       </p>
       <pre className="mt-2 overflow-x-auto rounded-md border border-border bg-muted/30 p-3 font-mono text-xs">
 {OPERATOR_CREDENTIALS_COMMAND}

@@ -7,6 +7,8 @@ import { hashPassword } from "better-auth/crypto";
 import {
   authAccounts,
   authUsers,
+  companies,
+  companyMemberships,
   createDb,
   instanceSettings,
   instanceUserRoles,
@@ -28,6 +30,16 @@ import { resolveDatabaseUrlFromConfig, resolveDbUrl as resolveLocalDatabaseUrl }
  * follows the conventions documented on `authAccounts` in
  * `packages/db/src/schema/auth.ts`, so the normal sign-in endpoint accepts it.
  *
+ * A fresh install configured for login never starts in `local_trusted` mode, so
+ * its database has no operator at all: `authenticated` startup grants nothing
+ * and the instance sits in `bootstrap_pending` until a browser claim or a
+ * bootstrap invite. On such a database (no recorded operator, no legacy
+ * sentinel admin, no `instance_admin` of any kind) this module creates the
+ * operator the way `local_trusted` startup does (`ensureOperatorIdentity` in
+ * `server/src/operator-identity.ts`) and attaches the credential in the same
+ * transaction, so a CLI-driven install gets its first admin without ever
+ * showing the setup screen (section 8).
+ *
  * Nothing here touches bind, host, or exposure.
  */
 
@@ -37,8 +49,11 @@ export const CREDENTIAL_PROVIDER_ID = "credential";
 /** Better Auth's `emailAndPassword` defaults, which the server does not override. */
 export const MIN_OPERATOR_PASSWORD_LENGTH = 8;
 export const MAX_OPERATOR_PASSWORD_LENGTH = 128;
+/** The display name `local_trusted` startup gives a new operator. */
+export const OPERATOR_USER_NAME = "Operator";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const INSTANCE_SETTINGS_SINGLETON_KEY = "default";
 
 type DbClient = ReturnType<typeof createDb>;
 type ClosableDb = DbClient & {
@@ -74,7 +89,7 @@ export async function inspectOperatorIdentity(db: OperatorQueryDb): Promise<Oper
   const settingsRow = await db
     .select({ general: instanceSettings.general })
     .from(instanceSettings)
-    .where(eq(instanceSettings.singletonKey, "default"))
+    .where(eq(instanceSettings.singletonKey, INSTANCE_SETTINGS_SINGLETON_KEY))
     .then((rows) => rows[0] ?? null);
   const general = settingsRow?.general;
   const recorded =
@@ -116,7 +131,7 @@ export async function inspectOperatorIdentity(db: OperatorQueryDb): Promise<Oper
 
 export type OperatorCredentialErrorCode =
   | "legacy_operator"
-  | "no_operator"
+  | "admin_exists"
   | "operator_missing"
   | "invalid_email"
   | "email_in_use"
@@ -124,10 +139,17 @@ export type OperatorCredentialErrorCode =
 
 export class OperatorCredentialError extends Error {
   code: OperatorCredentialErrorCode;
-  constructor(code: OperatorCredentialErrorCode, message: string) {
+  /** For `admin_exists`: the admin that already owns the instance. */
+  existingAdmin?: { userId: string; email: string | null };
+  constructor(
+    code: OperatorCredentialErrorCode,
+    message: string,
+    details?: { existingAdmin?: { userId: string; email: string | null } },
+  ) {
     super(message);
     this.name = "OperatorCredentialError";
     this.code = code;
+    if (details?.existingAdmin) this.existingAdmin = details.existingAdmin;
   }
 }
 
@@ -168,36 +190,231 @@ export function legacyOperatorGuidance(): string[] {
   ];
 }
 
+/**
+ * The instance has no recorded operator but already has an instance admin: a
+ * browser claim or a bootstrap invite won first. That account owns the
+ * instance; creating an operator next to it would be a second human.
+ */
+export function adminExistsGuidance(existingAdmin?: { userId: string; email: string | null }): string[] {
+  const who = existingAdmin ? ` (${existingAdmin.email ?? existingAdmin.userId})` : "";
+  return [
+    `This instance already has an instance admin${who}: a browser claim or bootstrap invite created it.`,
+    "Paperclip will not create a second human next to it.",
+    "",
+    "Choose one of these paths instead:",
+    "  1. Sign in as that account in the browser. It already owns the instance.",
+    `  2. If work still belongs to the local-board sentinel, move it into that account on the host:`,
+    `     ${pc.cyan("paperclipai auth reconcile-identity --from local-board --to <email> --apply")}`,
+  ];
+}
+
 export type AttachOperatorCredentialsResult = {
   userId: string;
   email: string;
   /** False when an existing credential account had its password replaced. */
   createdAccount: boolean;
+  /** True when the instance had no operator and this call created it (fresh authenticated install). */
+  createdOperator: boolean;
 };
 
+type OperatorWriteDb = Pick<DbClient, "select" | "insert" | "update" | "execute">;
+
 /**
- * Attach (or replace) the operator's email/password login. Refuses legacy
- * instances and instances without an operator; rejects an email another user
- * already holds; enforces Better Auth's password bounds; runs in one
- * transaction.
+ * Record the operator id in `instance_settings.general.operatorUserId`,
+ * merged into the existing `general` object the way the server's
+ * `instanceSettingsService.recordOperatorUserId` does. One upsert covers both
+ * the seeded singleton row and a database without one, and merges in SQL so a
+ * concurrent settings write cannot be clobbered.
+ */
+async function recordOperatorUserId(tx: OperatorWriteDb, userId: string): Promise<void> {
+  const now = new Date();
+  const patch = JSON.stringify({ operatorUserId: userId });
+  await tx
+    .insert(instanceSettings)
+    .values({
+      singletonKey: INSTANCE_SETTINGS_SINGLETON_KEY,
+      general: { operatorUserId: userId },
+      experimental: {},
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: [instanceSettings.singletonKey],
+      set: {
+        general: sql`coalesce(${instanceSettings.general}, '{}'::jsonb) || ${patch}::jsonb`,
+        updatedAt: now,
+      },
+    });
+}
+
+async function findEmailOwner(tx: OperatorWriteDb, email: string, exceptUserId?: string): Promise<string | null> {
+  const condition = exceptUserId
+    ? and(sql`lower(${authUsers.email}) = ${email}`, ne(authUsers.id, exceptUserId))
+    : sql`lower(${authUsers.email}) = ${email}`;
+  return tx
+    .select({ id: authUsers.id })
+    .from(authUsers)
+    .where(condition)
+    .then((rows) => rows[0]?.id ?? null);
+}
+
+async function insertCredentialAccount(
+  tx: OperatorWriteDb,
+  input: { userId: string; passwordHash: string; now: Date },
+): Promise<void> {
+  await tx.insert(authAccounts).values({
+    id: randomUUID(),
+    issuer: CREDENTIAL_ACCOUNT_ISSUER,
+    accountId: input.userId,
+    providerId: CREDENTIAL_PROVIDER_ID,
+    userId: input.userId,
+    password: input.passwordHash,
+    createdAt: input.now,
+    updatedAt: input.now,
+  });
+}
+
+/**
+ * Attach a credential to the recorded operator, or replace the password on
+ * the credential it already has.
+ */
+async function attachToExistingOperator(
+  tx: OperatorWriteDb,
+  input: { operatorUserId: string; email: string; passwordHash: string; name: string | null; now: Date },
+): Promise<AttachOperatorCredentialsResult> {
+  const { operatorUserId, email, passwordHash, name, now } = input;
+  const operator = await tx
+    .select({ id: authUsers.id, name: authUsers.name })
+    .from(authUsers)
+    .where(eq(authUsers.id, operatorUserId))
+    .for("update")
+    .then((rows) => rows[0] ?? null);
+  if (!operator) {
+    throw new OperatorCredentialError(
+      "operator_missing",
+      `The recorded operator user ${operatorUserId} does not exist. Start the server once in local_trusted mode to recreate it.`,
+    );
+  }
+
+  if (await findEmailOwner(tx, email, operatorUserId)) {
+    throw new OperatorCredentialError("email_in_use", `${email} already belongs to another user on this instance.`);
+  }
+
+  await tx
+    .update(authUsers)
+    .set({
+      email,
+      // Keep an operator-chosen name; replace only the startup placeholder
+      // or a blank name when the caller supplied one.
+      ...(name && (!operator.name?.trim() || operator.name.trim() === OPERATOR_USER_NAME) ? { name } : {}),
+      emailVerified: false,
+      updatedAt: now,
+    })
+    .where(eq(authUsers.id, operatorUserId));
+
+  const existingAccount = await tx
+    .select({ id: authAccounts.id })
+    .from(authAccounts)
+    .where(and(eq(authAccounts.userId, operatorUserId), eq(authAccounts.providerId, CREDENTIAL_PROVIDER_ID)))
+    .then((rows) => rows[0] ?? null);
+  if (existingAccount) {
+    await tx
+      .update(authAccounts)
+      .set({ password: passwordHash, updatedAt: now })
+      .where(eq(authAccounts.id, existingAccount.id));
+    return { userId: operatorUserId, email, createdAccount: false, createdOperator: false };
+  }
+
+  await insertCredentialAccount(tx, { userId: operatorUserId, passwordHash, now });
+  return { userId: operatorUserId, email, createdAccount: true, createdOperator: false };
+}
+
+/**
+ * Fresh authenticated install: create the operator with the same grants
+ * `local_trusted` startup gives it, record it, and attach the credential.
+ *
+ * The caller holds `instance_user_roles` in SHARE ROW EXCLUSIVE mode, the lock
+ * the server's first-admin transaction takes (`claimFirstInstanceAdmin` in
+ * `server/src/first-admin-claim.ts`, shared by the browser claim and bootstrap
+ * invites), so the two paths serialize and the re-checks here see whatever a
+ * concurrent claim committed.
+ */
+async function createOperatorWithCredential(
+  tx: OperatorWriteDb,
+  input: { email: string; passwordHash: string; name: string | null; now: Date },
+): Promise<AttachOperatorCredentialsResult> {
+  const { email, passwordHash, name, now } = input;
+
+  const existingAdmin = await tx
+    .select({ userId: instanceUserRoles.userId })
+    .from(instanceUserRoles)
+    .where(eq(instanceUserRoles.role, "instance_admin"))
+    .limit(1)
+    .then((rows) => rows[0] ?? null);
+  if (existingAdmin) {
+    const adminUser = await tx
+      .select({ email: authUsers.email })
+      .from(authUsers)
+      .where(eq(authUsers.id, existingAdmin.userId))
+      .then((rows) => rows[0] ?? null);
+    const admin = { userId: existingAdmin.userId, email: adminUser?.email ?? null };
+    throw new OperatorCredentialError(
+      "admin_exists",
+      `This instance already has an instance admin (${admin.email ?? admin.userId}) but no recorded operator; ` +
+        "a browser claim or bootstrap invite created it. Sign in as that account, or move ownership into it with " +
+        "`paperclipai auth reconcile-identity`.",
+      { existingAdmin: admin },
+    );
+  }
+
+  if (await findEmailOwner(tx, email)) {
+    throw new OperatorCredentialError("email_in_use", `${email} already belongs to another user on this instance.`);
+  }
+
+  const userId = randomUUID();
+  await tx.insert(authUsers).values({
+    id: userId,
+    name: name ?? OPERATOR_USER_NAME,
+    email,
+    emailVerified: false,
+    image: null,
+    createdAt: now,
+    updatedAt: now,
+  });
+  await tx.insert(instanceUserRoles).values({ userId, role: "instance_admin" });
+
+  // Mirror `ensureOwnerMemberships`: the operator owns every company. The row
+  // is brand new, so no membership can exist yet.
+  const companyRows = await tx.select({ id: companies.id }).from(companies);
+  for (const company of companyRows) {
+    await tx.insert(companyMemberships).values({
+      companyId: company.id,
+      principalType: "user",
+      principalId: userId,
+      status: "active",
+      membershipRole: "owner",
+    });
+  }
+
+  await recordOperatorUserId(tx, userId);
+  await insertCredentialAccount(tx, { userId, passwordHash, now });
+  return { userId, email, createdAccount: true, createdOperator: true };
+}
+
+/**
+ * Attach (or replace) the operator's email/password login. On a database with
+ * no operator and no instance admin at all (a fresh authenticated install),
+ * create the operator first. Refuses legacy instances and instances whose
+ * first admin already came from a browser claim or bootstrap invite; rejects
+ * an email another user already holds; enforces Better Auth's password
+ * bounds; runs in one transaction.
  */
 export async function attachOperatorCredentials(
   db: DbClient,
   input: { email: string; password: string; name?: string | null },
 ): Promise<AttachOperatorCredentialsResult> {
   const identity = await inspectOperatorIdentity(db);
-  if (identity.kind === "legacy") {
-    throw new OperatorCredentialError(
-      "legacy_operator",
-      "This instance uses the legacy operator identity (local-board); credentials cannot be attached to the agent sentinel.",
-    );
-  }
-  if (identity.kind === "none") {
-    throw new OperatorCredentialError(
-      "no_operator",
-      "No operator is recorded for this instance. Start the server once in local_trusted mode, or use `paperclipai auth bootstrap-ceo`.",
-    );
-  }
+  if (identity.kind === "legacy") throw legacyOperatorError();
   const email = normalizeOperatorEmail(input.email);
   const passwordProblem = validateOperatorPassword(input.password);
   if (passwordProblem) throw new OperatorCredentialError("weak_password", passwordProblem);
@@ -207,69 +424,39 @@ export async function attachOperatorCredentials(
   const name = input.name?.trim() || null;
 
   return db.transaction(async (tx) => {
-    const operator = await tx
-      .select({ id: authUsers.id, name: authUsers.name })
-      .from(authUsers)
-      .where(eq(authUsers.id, identity.userId))
-      .for("update")
-      .then((rows) => rows[0] ?? null);
-    if (!operator) {
-      throw new OperatorCredentialError(
-        "operator_missing",
-        `The recorded operator user ${identity.userId} does not exist. Start the server once in local_trusted mode to recreate it.`,
-      );
+    if (identity.kind === "dedicated") {
+      return attachToExistingOperator(tx, { operatorUserId: identity.userId, email, passwordHash, name, now });
     }
 
-    const emailOwner = await tx
-      .select({ id: authUsers.id })
-      .from(authUsers)
-      .where(and(sql`lower(${authUsers.email}) = ${email}`, ne(authUsers.id, identity.userId)))
-      .then((rows) => rows[0] ?? null);
-    if (emailOwner) {
-      throw new OperatorCredentialError("email_in_use", `${email} already belongs to another user on this instance.`);
+    // No operator before the transaction. Take the server's first-admin lock,
+    // then classify again under it: a `local_trusted` start may have recorded
+    // an operator, a claim may have made an admin, in the meantime.
+    await tx.execute(sql`lock table ${instanceUserRoles} in share row exclusive mode`);
+    const current = await inspectOperatorIdentity(tx);
+    if (current.kind === "legacy") throw legacyOperatorError();
+    if (current.kind === "dedicated") {
+      return attachToExistingOperator(tx, { operatorUserId: current.userId, email, passwordHash, name, now });
     }
-
-    await tx
-      .update(authUsers)
-      .set({
-        email,
-        // Keep an operator-chosen name; replace only the startup placeholder
-        // or a blank name when the caller supplied one.
-        ...(name && (!operator.name?.trim() || operator.name.trim() === "Operator") ? { name } : {}),
-        emailVerified: false,
-        updatedAt: now,
-      })
-      .where(eq(authUsers.id, identity.userId));
-
-    const existingAccount = await tx
-      .select({ id: authAccounts.id })
-      .from(authAccounts)
-      .where(and(eq(authAccounts.userId, identity.userId), eq(authAccounts.providerId, CREDENTIAL_PROVIDER_ID)))
-      .then((rows) => rows[0] ?? null);
-    if (existingAccount) {
-      await tx
-        .update(authAccounts)
-        .set({ password: passwordHash, updatedAt: now })
-        .where(eq(authAccounts.id, existingAccount.id));
-      return { userId: identity.userId, email, createdAccount: false };
-    }
-
-    await tx.insert(authAccounts).values({
-      id: randomUUID(),
-      issuer: CREDENTIAL_ACCOUNT_ISSUER,
-      accountId: identity.userId,
-      providerId: CREDENTIAL_PROVIDER_ID,
-      userId: identity.userId,
-      password: passwordHash,
-      createdAt: now,
-      updatedAt: now,
-    });
-    return { userId: identity.userId, email, createdAccount: true };
+    return createOperatorWithCredential(tx, { email, passwordHash, name, now });
   });
+}
+
+function legacyOperatorError(): OperatorCredentialError {
+  return new OperatorCredentialError(
+    "legacy_operator",
+    "This instance uses the legacy operator identity (local-board); credentials cannot be attached to the agent sentinel.",
+  );
 }
 
 export function loginEnabledMessage(email: string): string {
   return `Login enabled. Sign in as ${pc.cyan(email)}. Your existing companies, tasks, and provider connections stay with this account.`;
+}
+
+export function operatorCreatedMessage(email: string): string {
+  return (
+    `Operator created and login enabled. Sign in as ${pc.cyan(email)}. ` +
+    "This account is the instance admin and owns every company; no browser claim is needed."
+  );
 }
 
 function isInteractive(): boolean {
@@ -324,27 +511,40 @@ function openDb(url: string): DbClient {
   return createDb(url, { connectTimeoutSeconds: 5 });
 }
 
+/** Print an `OperatorCredentialError` with the guidance its code calls for. */
+function reportOperatorCredentialError(err: OperatorCredentialError): void {
+  p.log.error(err.message);
+  if (err.code === "legacy_operator") {
+    p.note(legacyOperatorGuidance().join("\n"), "Legacy operator identity");
+  } else if (err.code === "admin_exists") {
+    p.note(adminExistsGuidance(err.existingAdmin).join("\n"), "Instance admin already exists");
+  }
+}
+
 export type OperatorCredentialUpgradeOutcome =
   | "attached"
+  | "created"
   | "already_configured"
   | "skipped"
   | "legacy"
-  | "no_operator"
+  | "admin_exists"
   | "unavailable";
 
 /**
  * Offered by `configure --section server` when the mode moves from
  * `local_trusted` to `authenticated`: prompt for email and password and attach
- * them to the existing operator so no browser claim is needed afterwards. The
- * caller saves the config regardless of the outcome; every non-`attached`
- * outcome prints what to do next.
+ * them to the existing operator so no browser claim is needed afterwards. On a
+ * database with no operator yet (an install that never ran without login) the
+ * same prompt creates the operator as the first admin. The caller saves the
+ * config regardless of the outcome; every non-`attached`/`created` outcome
+ * prints what to do next.
  */
 export async function offerOperatorCredentialUpgrade(input: {
   configPath?: string;
   database: PaperclipConfig["database"];
   dbUrl?: string;
 }): Promise<OperatorCredentialUpgradeOutcome> {
-  const headlessHint = `Run ${pc.cyan("paperclipai auth set-operator-credentials --email <email>")} while the server is running to attach a login to the operator account.`;
+  const headlessHint = `Run ${pc.cyan("paperclipai auth set-operator-credentials --email <email>")} while the server is running to attach a login to the operator account (it also creates the operator on a database that has none yet).`;
   const dbUrl = input.dbUrl ?? resolveDatabaseUrlFromConfig(input.database);
   if (!dbUrl) {
     p.log.warn(`Could not resolve the database connection. ${headlessHint}`);
@@ -372,34 +572,41 @@ export async function offerOperatorCredentialUpgrade(input: {
       p.note(legacyOperatorGuidance().join("\n"), "Legacy operator identity");
       return "legacy";
     }
-    if (identity.kind === "none") {
-      p.log.info(
-        "No operator is recorded for this instance, so there is no account to keep. " +
-          `The first admin is created through the browser setup screen or ${pc.cyan("paperclipai auth bootstrap-ceo")}.`,
-      );
-      return "no_operator";
-    }
 
     p.log.step(pc.bold("Operator login"));
+    const hasCredential = identity.kind === "dedicated" && identity.hasCredential;
     p.log.message(
       pc.dim(
-        identity.hasCredential
-          ? `The operator account (${identity.email ?? identity.userId}) already has a login. You can set a new email and password now, or keep it.`
-          : "Login is about to be required. Your companies, tasks, and provider connections belong to the operator account; give it an email and password so you can sign in as it.",
+        identity.kind === "none"
+          ? "This database has no operator yet. The account you create now becomes the instance admin and owns every company, so no browser claim is needed."
+          : hasCredential
+            ? `The operator account (${identity.email ?? identity.userId}) already has a login. You can set a new email and password now, or keep it.`
+            : "Login is about to be required. Your companies, tasks, and provider connections belong to the operator account; give it an email and password so you can sign in as it.",
       ),
     );
     const proceed = await p.confirm({
-      message: identity.hasCredential ? "Replace the operator login?" : "Set the operator email and password now?",
-      initialValue: !identity.hasCredential,
+      message:
+        identity.kind === "none"
+          ? "Create the operator account and its login now?"
+          : hasCredential
+            ? "Replace the operator login?"
+            : "Set the operator email and password now?",
+      initialValue: !hasCredential,
     });
     if (p.isCancel(proceed) || !proceed) {
-      if (identity.hasCredential) return "already_configured";
-      p.log.warn(`Skipped. Until a login is attached, nobody can sign in as the operator. ${headlessHint}`);
+      if (hasCredential) return "already_configured";
+      p.log.warn(
+        identity.kind === "none"
+          ? `Skipped. Until a first admin exists, the browser shows the setup screen. Claim it there, run ${pc.cyan("paperclipai auth bootstrap-ceo")}, or ${headlessHint}`
+          : `Skipped. Until a login is attached, nobody can sign in as the operator. ${headlessHint}`,
+      );
       return "skipped";
     }
 
     const email = await promptEmail(
-      identity.email && !identity.email.endsWith(".paperclip.local") ? identity.email : null,
+      identity.kind === "dedicated" && identity.email && !identity.email.endsWith(".paperclip.local")
+        ? identity.email
+        : null,
     );
     if (!email) return "skipped";
     const password = await promptPassword();
@@ -407,15 +614,17 @@ export async function offerOperatorCredentialUpgrade(input: {
 
     try {
       const result = await attachOperatorCredentials(db, { email, password });
+      if (result.createdOperator) {
+        p.log.success(operatorCreatedMessage(result.email));
+        return "created";
+      }
       p.log.success(loginEnabledMessage(result.email));
       return "attached";
     } catch (err) {
       if (err instanceof OperatorCredentialError) {
-        p.log.error(err.message);
-        if (err.code === "legacy_operator") {
-          p.note(legacyOperatorGuidance().join("\n"), "Legacy operator identity");
-          return "legacy";
-        }
+        reportOperatorCredentialError(err);
+        if (err.code === "legacy_operator") return "legacy";
+        if (err.code === "admin_exists") return "admin_exists";
         p.log.info(headlessHint);
         return "skipped";
       }
@@ -429,7 +638,8 @@ export async function offerOperatorCredentialUpgrade(input: {
 /**
  * `paperclipai auth set-operator-credentials --email <email>`: the headless
  * form of the upgrade prompt. The password is prompted, or read from stdin
- * with `--password-stdin`.
+ * with `--password-stdin`. On a fresh authenticated install this also creates
+ * the operator as the first admin.
  */
 export async function setOperatorCredentialsCommand(opts: {
   config?: string;
@@ -501,22 +711,23 @@ export async function setOperatorCredentialsCommand(opts: {
   try {
     const result = await attachOperatorCredentials(db, { email, password, name: opts.name ?? null });
     p.log.success(
-      result.createdAccount
-        ? loginEnabledMessage(result.email)
-        : `Operator login updated. Sign in as ${pc.cyan(result.email)}.`,
+      result.createdOperator
+        ? operatorCreatedMessage(result.email)
+        : result.createdAccount
+          ? loginEnabledMessage(result.email)
+          : `Operator login updated. Sign in as ${pc.cyan(result.email)}.`,
     );
     if (config?.server.deploymentMode !== "authenticated") {
       p.log.info(
         `This instance is still in ${config?.server.deploymentMode ?? "local_trusted"} mode. ` +
           `Run ${pc.cyan("paperclipai configure --section server")} to require login; the bind address does not change.`,
       );
+    } else if (result.createdOperator) {
+      p.log.info("A running server picks this up without a restart: the setup screen is gone and /api/health reports bootstrapStatus: ready.");
     }
   } catch (err) {
     if (err instanceof OperatorCredentialError) {
-      p.log.error(err.message);
-      if (err.code === "legacy_operator") {
-        p.note(legacyOperatorGuidance().join("\n"), "Legacy operator identity");
-      }
+      reportOperatorCredentialError(err);
       process.exitCode = 1;
       return;
     }

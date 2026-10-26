@@ -116,10 +116,12 @@ only then where the server listens):
 4. explicit public URL is only required for `authenticated + public`
 5. when an authenticated choice is made on a fresh install, the CLI does not
    attach credentials inline (there is no running database yet). It prints
-   the first-admin steps instead: start the server, then claim it in the
-   browser (section 8) or run `paperclipai auth bootstrap-ceo`; a database
-   that already ran without login keeps its operator with
-   `paperclipai auth set-operator-credentials --email <email>` (section 8.1).
+   the first-admin steps instead: start the server, then run
+   `paperclipai auth set-operator-credentials --email <email>` on the host,
+   which creates the operator with its login as the first admin (section 8)
+   or, on a database that already ran without login, keeps its operator and
+   attaches the login (section 8.1). Claiming in the browser (section 8) and
+   `paperclipai auth bootstrap-ceo` remain the alternatives.
 
 Examples:
 
@@ -309,8 +311,9 @@ admin and then falls through to normal onboarding. The setup screen
 (`BootstrapPendingPage`) carries the same explainer the CLI prints when login
 is chosen: login belongs to this instance, not to a hosted subscription, and
 claiming makes the signed-in account the first admin. It also names the two
-host-side commands (`auth bootstrap-ceo`, and `auth set-operator-credentials`
-for a database that already ran without login). The endpoint is available
+host-side commands (`auth bootstrap-ceo`, and `auth set-operator-credentials`,
+which creates the operator with its login on a fresh install and keeps the
+operator of a database that already ran without login). The endpoint is available
 only to real browser session actors in `authenticated/private`; unauthenticated
 requests, agent keys, board API keys, and local implicit board actors are
 rejected.
@@ -330,6 +333,40 @@ pnpm paperclipai auth bootstrap-ceo
 That command prints a one-time first-admin invite URL. Browser claim and
 bootstrap invite acceptance share the same first-admin transaction, so whichever
 path wins first makes later attempts return a conflict.
+
+A second host-side path creates the operator directly, so a CLI-driven install
+never has to show the setup screen:
+
+```sh
+paperclipai auth set-operator-credentials --email <email>
+```
+
+On a database with no recorded operator, no legacy sentinel admin, and no
+`instance_admin` of any kind, the command creates the operator the way
+`local_trusted` startup does (section 6.1) and attaches the login in one
+transaction:
+
+1. an `authUsers` row with a random id, the name from `--name` (default
+   `Operator`), the given email, and `emailVerified: false`
+2. the `instance_admin` role
+3. an active `owner` membership in every existing company
+4. the id recorded in `instance_settings.general.operatorUserId`, merged into
+   the existing `general` object (the singleton row is created if missing)
+5. the Better Auth credential account described in section 8.1
+
+The transaction locks `instance_user_roles` the same way the first-admin
+transaction does and re-checks under the lock, so the command and a concurrent
+browser claim or invite acceptance serialize: whichever wins, the other sees
+the admin and stops. When an `instance_admin` already exists but no operator is
+recorded (a claim or invite won first), the command refuses with
+`admin_exists`, writes nothing, and points at signing in as that account or
+moving ownership into it with `auth reconcile-identity`; it never creates a
+second human. A running server needs no restart: `bootstrapStatus` is computed
+from the role count on every `/api/health` call, and once an admin exists the
+health route adopts the newly recorded operator, so the same response reports
+`operatorIdentity: "dedicated"` and the normal `/api/auth/sign-in/email`
+accepts the credentials with the operator's id as the session user. Re-running
+the command replaces the password on that same account.
 
 For `authenticated/public`, browser first-admin claim is intentionally disabled.
 Public deployments must use the high-entropy bootstrap invite path unless a
@@ -371,7 +408,10 @@ echo "$PASSWORD" | paperclipai auth set-operator-credentials --email <email> --p
 Both forms run on the host with database access (an embedded PostgreSQL
 cluster must be running). A duplicate email is rejected; the password follows
 Better Auth's bounds (8 to 128 characters). Re-running replaces the password
-on the same account rather than adding a second human.
+on the same account rather than adding a second human. On a database that
+never ran without login and so has no operator at all, the same command
+creates the operator as the first admin instead (section 8); the `configure`
+prompt does the same when it finds no operator.
 
 Bind is untouched. Enabling login does not change the listening address; LAN
 or Tailscale reachability remains the separate bind prompt.

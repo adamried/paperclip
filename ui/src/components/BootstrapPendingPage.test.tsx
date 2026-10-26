@@ -62,7 +62,8 @@ describe("BootstrapPendingPage", () => {
     expect(container.textContent).toContain("Sign in / Create account");
     expect(container.textContent).toContain(BOOTSTRAP_FALLBACK_COMMAND);
     expect(container.textContent).toContain(OPERATOR_CREDENTIALS_COMMAND);
-    expect(container.textContent).toContain("already run without login");
+    expect(container.textContent).toContain("create the operator account and its login directly on the host");
+    expect(container.textContent).toContain("already ran without login");
   });
 
   it("keeps the claim button and says the signed-in account becomes the first admin", async () => {

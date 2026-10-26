@@ -234,6 +234,29 @@ export async function resolveOperatorIdentity(
   return { kind: "none", userId: null, userName: null, userEmail: null, deploymentMode: opts.deploymentMode };
 }
 
+/**
+ * Adopt an operator recorded after startup. `authenticated` startup classifies
+ * the instance once, and a fresh install resolves to `none`; `paperclipai auth
+ * set-operator-credentials` can then create and record the operator while the
+ * server runs (doc/DEPLOYMENT-MODES.md section 8). A caller that sees `none`
+ * re-reads the record and adopts it, so `/api/health` reports `dedicated`
+ * without a restart. Only a recorded operator is adopted: the sentinel's role
+ * is never re-evaluated here, so a legacy classification stays as startup made
+ * it, and anything other than `none` is returned untouched.
+ */
+export async function adoptRecordedOperatorIdentity(db: OperatorDb): Promise<OperatorIdentity> {
+  const cached = getOperatorIdentity();
+  if (cached.kind !== "none") return cached;
+  const recorded = await readRecordedOperatorUserId(db);
+  if (!recorded) return cached;
+  const user = await loadUser(db, recorded);
+  const identity: OperatorIdentity = user
+    ? dedicatedIdentity(user, cached.deploymentMode)
+    : { kind: "dedicated", userId: recorded, userName: null, userEmail: null, deploymentMode: cached.deploymentMode };
+  setOperatorIdentity(identity);
+  return identity;
+}
+
 export type EnsureOperatorIdentityResult = OperatorIdentity & {
   /** True when this call created the dedicated operator (first local start). */
   created: boolean;

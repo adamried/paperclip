@@ -300,7 +300,7 @@ Current CLI behavior:
 
 - `paperclipai onboard` and `paperclipai configure --section server` set deployment mode in config
 - server onboarding/configure first ask "How will you use Paperclip?" (`Only on this computer`, `Other devices, teammates, or a remote assistant`, `Not sure yet`, `Advanced`) to decide whether login is required, then ask how other devices reach it (`Private network` or `Tailnet`) only when they will; they write `server.deploymentMode` and `server.bind` separately, so `Not sure yet` yields `authenticated/private` on loopback
-- when login is chosen on a fresh install, onboarding prints the first-admin steps (browser claim or `auth bootstrap-ceo` after `paperclipai run`, or `auth set-operator-credentials` for a database that already ran without login) instead of prompting for credentials, since no database is running yet
+- when login is chosen on a fresh install, onboarding prints the first-admin steps instead of prompting for credentials, since no database is running yet: after `paperclipai run`, `auth set-operator-credentials` creates the operator with its login (and keeps the operator of a database that already ran without login), or the browser claim / `auth bootstrap-ceo`
 - `paperclipai run --bind <loopback|lan|tailnet>` passes a quickstart bind preset into first-run onboarding when config is missing
 - runtime can override mode with `PAPERCLIP_DEPLOYMENT_MODE`
 - `paperclipai run` and `paperclipai doctor` still do not expose a direct low-level `--mode` flag
@@ -365,6 +365,20 @@ Options: `--email <email>` (must be unique on the instance), `--name <name>`
 (sets the display name while it is still the default `Operator`),
 `--password-stdin`, `--db-url <url>`, `-c, --config <path>`,
 `-d, --data-dir <path>`. Re-running replaces the password on the same account.
+
+On a fresh authenticated install the database has no operator and no instance
+admin at all. The same command then creates the operator as the first admin
+(an `authUsers` row named from `--name` or `Operator`, the `instance_admin`
+role, owner membership in every company, and the recorded `operatorUserId`)
+and attaches the login in the same transaction, so no browser claim or
+`auth bootstrap-ceo` is needed. A running server picks it up without a
+restart: `GET /api/health` reports `bootstrapStatus: ready` and
+`operatorIdentity: dedicated`. The command takes the same lock as the server's
+first-admin transaction, so it cannot race a browser claim into two admins. If
+an instance admin already exists but no operator is recorded (a browser claim
+or bootstrap invite won first), the command refuses with `admin_exists` and
+writes nothing: sign in as that account, or move ownership into it with
+`auth reconcile-identity`.
 
 Legacy instances, where `local-board` still holds `instance_admin` and no
 operator is recorded, are refused: the command prints the two migration paths

@@ -36,7 +36,7 @@ import {
 } from "../auth/workspace-login-handoff.js";
 import { serverVersion } from "../version.js";
 import { getStartupRecoveryState } from "../startup-recovery-state.js";
-import { getOperatorIdentity } from "../operator-identity.js";
+import { adoptRecordedOperatorIdentity, getOperatorIdentity } from "../operator-identity.js";
 import { nativeRestartRecoverySummary } from "../services/native-runtime/native-restart-recovery.js";
 import {
   removeHotRestartIntent,
@@ -326,7 +326,7 @@ export function healthRoutes(
     // operator and startup left the instance unmigrated. It is a
     // classification, not identity material, so it rides every response shape
     // that carries bootstrapStatus.
-    const operatorIdentity = (opts.operatorIdentity ?? (() => getOperatorIdentity().kind))();
+    let operatorIdentity = (opts.operatorIdentity ?? (() => getOperatorIdentity().kind))();
     // Cloud-managed instances have no first-admin concept: the control
     // plane owns identity and its trusted-header users are deliberately
     // never instance_admin, so the role-count gate below would report
@@ -340,6 +340,15 @@ export function healthRoutes(
         .where(sql`${instanceUserRoles.role} = 'instance_admin'`)
         .then((rows) => Number(rows[0]?.count ?? 0));
       bootstrapStatus = roleCount > 0 ? "ready" : "bootstrap_pending";
+
+      // `paperclipai auth set-operator-credentials` creates and records the
+      // operator on a fresh authenticated install while the server runs. The
+      // first admin appearing after a `none` classification is that case (a
+      // browser claim records nothing), so adopt the record instead of
+      // reporting `none` until a restart.
+      if (bootstrapStatus === "ready" && operatorIdentity === "none" && !opts.operatorIdentity) {
+        operatorIdentity = (await adoptRecordedOperatorIdentity(db)).kind;
+      }
 
       if (bootstrapStatus === "bootstrap_pending") {
         const now = new Date();
