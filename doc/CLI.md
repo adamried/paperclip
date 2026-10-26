@@ -306,6 +306,37 @@ Current CLI behavior:
 
 Canonical behavior is documented in `doc/DEPLOYMENT-MODES.md`.
 
+### Identity reconciliation after moving to authenticated mode
+
+An instance that ran in `local_trusted` mode owns its data through the
+`local-board` identity. Claiming board ownership after switching to
+`authenticated` mode moves only the instance role and company memberships;
+assigned issues, pending approvals, model-provider defaults, and other
+operational references stay on `local-board`. `auth reconcile-identity`
+moves them to the real operator account:
+
+```sh
+# preview (writes nothing)
+npx paperclipai auth reconcile-identity --from local-board --to you@example.com
+
+# apply in one transaction
+npx paperclipai auth reconcile-identity --from local-board --to you@example.com --apply
+
+# also move active board API keys that were created as local-board
+npx paperclipai auth reconcile-identity --from local-board --to <user-id> --apply --include-board-keys
+```
+
+Rules:
+
+- Host-authorized: it talks to the database directly (same trust as `auth bootstrap-ceo`); there is no HTTP endpoint. Use `--db-url`, `DATABASE_URL`, or the config file's database settings.
+- `--from` accepts only `local-board`. `--to` resolves a user id or an email that matches exactly one account. The target must already hold `instance_admin` (otherwise the error names the `admin user promote` command to run).
+- Dry run by default; the preview is grouped by class and table with per-company counts. `--apply` locks `instance_user_roles` and runs one transaction. A second `--apply` changes zero rows.
+- Class A (operational) references move: issue assignee/responsible/conversation user, pending approval and interaction addressees, agent reporting lines, company default responsible user, routine owners, active agent API keys, active runs and their identity contexts, tool application owners, shared-grant memberships, per-user policies, company memberships, permission grants, sidebar memberships. `ai_connection_defaults` and `ai_provider_defaults` are copied to the target; the source rows stay.
+- Class B (history such as `created_by_user_id`, decided approvals, finished runs, activity log actors) and class C (`issue_comments.author_user_id` and other comment authors, which double as the agent-posting sentinel) are counted and never rewritten.
+- Class D (personal connection grants and user-scoped secrets) is listed under "re-authorize as the new account" and never copied: moving a personal credential would widen access without consent.
+- Nothing is decided, approved, resolved, or completed. The source user row, its `instance_admin` role, and `authAccounts` are never touched.
+- Per-company `activity_log` rows with action `identity.reconciled` are written on apply (actor: the target). The full report is printed and saved as `<instance data dir>/reconcile-identity-<timestamp>.json`; `--json` prints it as JSON instead.
+
 Allow an authenticated/private hostname (for example custom Tailscale DNS):
 
 ```sh
