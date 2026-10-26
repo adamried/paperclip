@@ -49,12 +49,41 @@ describe("buildOrgChartTree", () => {
     expect(root!.reports[2]!.reports[0]!.kind).toBe("agent");
   });
 
-  it("labels the local board user and unknown users sensibly", () => {
+  it("labels the agent sentinel and unknown users sensibly", () => {
     const [root] = buildOrgChartTree(
       [agent("a", { reportsToUserId: "local-board" }), agent("b", { reportsToUserId: "0123456789" })],
       new Map(),
     );
-    expect(root!.reports.map((node) => node.name).sort()).toEqual(["01234567", "Board"]);
+    expect(root!.reports.map((node) => node.name).sort()).toEqual(["01234567", "Agent runtime"]);
+  });
+
+  it("lists Board members under the root before other managers, merging a member who also manages", () => {
+    const boardUsers = new Map<string, OrgChartUserSummary>([
+      ...users,
+      ["u3", { name: "Zed", email: null, image: null, membershipRole: null, active: false }],
+    ]);
+    const [root] = buildOrgChartTree(
+      [agent("ceo"), agent("cos", { reportsToUserId: "u1" }), agent("other", { reportsToUserId: "u2" })],
+      boardUsers,
+      ["u3", "u1", "local-board"],
+    );
+
+    expect(root?.reports.map((node) => [node.kind, node.id, node.role])).toEqual([
+      ["user", "user:u1", "board"],
+      ["user", "user:u3", "board"],
+      ["user", "user:u2", "viewer"],
+      ["agent", "ceo", "general"],
+    ]);
+    const dana = root!.reports[0]!;
+    expect(dana.name).toBe("Dana");
+    expect(dana.reports.map((node) => node.id)).toEqual(["cos"]);
+    const zed = root!.reports[1]!;
+    expect(zed.name).toBe("Zed");
+    // Board membership is instance authority, not company membership.
+    expect(zed.status).toBe("active");
+    expect(zed.reports).toEqual([]);
+    // The sentinel never becomes a Board seat.
+    expect(root!.reports.some((node) => node.id === "user:local-board")).toBe(false);
   });
 
   it("lists the distinct manager ids referenced by roots", () => {

@@ -46,6 +46,7 @@ import {
   updateMemberPermissionsSchema,
   updateUserCompanyAccessSchema,
   PERMISSION_KEYS,
+  LOCAL_BOARD_SENTINEL_USER_ID,
   isUuidLike,
 } from "@paperclipai/shared";
 import type { DeploymentExposure, DeploymentMode, HumanCompanyMembershipRole } from "@paperclipai/shared";
@@ -102,8 +103,10 @@ import {
 import { assertAuthenticated, assertCompanyAccess } from "./authz.js";
 import {
   claimBoardOwnership,
-  inspectBoardClaimChallenge
+  inspectBoardClaimChallenge,
+  isBoardClaimPending,
 } from "../board-claim.js";
+import { listBoardMembers } from "../services/board-members.js";
 import { claimFirstInstanceAdmin } from "../first-admin-claim.js";
 import { getStorageService } from "../storage/index.js";
 import { secretService } from "../services/secrets.js";
@@ -2695,12 +2698,29 @@ export function accessRoutes(
     if (!allowed) throw forbidden("Instance admin required");
   }
 
+  // Registered before `/board-claim/:token` so "status" is never read as a
+  // token. Signed-in session actors only, authenticated mode only, and the
+  // body is `{ pending }` alone: no token, no code, nothing to enumerate.
+  router.get("/board-claim/status", async (req, res) => {
+    if (opts.deploymentMode !== "authenticated") {
+      throw notFound("Board claim status is not available");
+    }
+    if (
+      req.actor.type !== "board" ||
+      req.actor.source !== "session" ||
+      !req.actor.userId
+    ) {
+      throw unauthorized("Sign in to read board claim status");
+    }
+    res.json({ pending: await isBoardClaimPending(db) });
+  });
+
   router.get("/board-claim/:token", async (req, res) => {
     const token = (req.params.token as string).trim();
     const code =
       typeof req.query.code === "string" ? req.query.code.trim() : undefined;
     if (!token) throw notFound("Board claim challenge not found");
-    const challenge = inspectBoardClaimChallenge(token, code);
+    const challenge = await inspectBoardClaimChallenge(db, token, code);
     if (challenge.status === "invalid")
       throw notFound("Board claim challenge not found");
     res.json(challenge);
@@ -2730,17 +2750,24 @@ export function accessRoutes(
       throw notFound("Board claim challenge not found");
     if (claimed.status === "expired")
       throw conflict(
-        "Board claim challenge expired. Restart server to generate a new one."
+        "Board claim challenge expired. Run `paperclipai auth board-claim-url` on the host to issue a new one."
       );
     if (claimed.status === "claimed") {
+      logger.info(
+        { userId: claimed.claimedByUserId },
+        "board claim: legacy local-board admin claimed by signed-in user",
+      );
       res.json({
         claimed: true,
-        userId: claimed.claimedByUserId ?? req.actor.userId
+        userId: claimed.claimedByUserId,
+        // TODO(spec-1): identity reconciliation preview summary; null until
+        // the reconcile-identity module lands.
+        reconciliationPreview: claimed.reconciliationPreview,
       });
       return;
     }
 
-    throw conflict("Board claim challenge is no longer available");
+    throw conflict("Board claim challenge has already been claimed");
   });
 
   router.post("/bootstrap/claim", async (req, res) => {
@@ -4659,10 +4686,27 @@ export function accessRoutes(
       await assertInstanceAdmin(req);
       assertAccessAdminVisible();
       const userId = req.params.userId as string;
+      if (userId === LOCAL_BOARD_SENTINEL_USER_ID) {
+        throw conflict("The agent runtime sentinel cannot be a Board member");
+      }
       const result = await access.promoteInstanceAdmin(userId);
+      logger.info(
+        { userId, actorUserId: req.actor.userId ?? null },
+        "board: member added (instance_admin granted)",
+      );
       res.status(201).json(result);
     }
   );
+
+  /**
+   * The Board: every `instance_admin` user except the `local-board` sentinel.
+   * Reuses the admin-users access check; no table of its own.
+   */
+  router.get("/admin/board", async (req, res) => {
+    await assertInstanceAdmin(req);
+    assertAccessAdminVisible();
+    res.json(await listBoardMembers(db));
+  });
 
   router.get("/admin/users", async (req, res) => {
     await assertInstanceAdmin(req);
@@ -4678,13 +4722,16 @@ export function accessRoutes(
       })
       .from(authUsers)
       .orderBy(desc(authUsers.updatedAt));
+    // The agent-posting sentinel is not a person and never appears in the
+    // directory, so it cannot be picked for promotion or company access.
+    const people = users.filter((user) => user.id !== LOCAL_BOARD_SENTINEL_USER_ID);
     const filteredUsers = needle
-      ? users.filter((user) =>
+      ? people.filter((user) =>
           [user.name, user.email]
             .filter((value): value is string => Boolean(value))
             .some((value) => value.toLowerCase().includes(needle)),
         )
-      : users;
+      : people;
     const userIds = filteredUsers.slice(0, 50).map((user) => user.id);
     const memberships = userIds.length
       ? await db
@@ -4867,6 +4914,10 @@ export function accessRoutes(
       const userId = req.params.userId as string;
       const removed = await access.demoteInstanceAdmin(userId);
       if (!removed) throw notFound("Instance admin role not found");
+      logger.info(
+        { userId, actorUserId: req.actor.userId ?? null },
+        "board: member removed (instance_admin revoked)",
+      );
       res.json(removed);
     }
   );

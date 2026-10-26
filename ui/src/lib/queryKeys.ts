@@ -590,6 +590,8 @@ export const queryKeys = {
     companyUserDirectory: (companyId: string) =>
       ["access", "company-user-directory", companyId] as const,
     adminUsers: (query: string) => ["access", "admin-users", query] as const,
+    boardMembers: ["access", "board-members"] as const,
+    boardClaimPending: ["access", "board-claim-pending"] as const,
     userCompanyAccess: (userId: string) =>
       ["access", "user-company-access", userId] as const,
     invite: (token: string) => ["access", "invite", token] as const,

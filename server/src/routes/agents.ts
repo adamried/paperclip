@@ -163,6 +163,7 @@ import {
   type OrgChartAgentNode,
 } from "../services/org-chart-tree.js";
 import { assertAgentMayAssignManager, loadOrgChartUserSummaries, resolveActiveAgentManagerUserId } from "../services/agent-manager.js";
+import { listBoardMembers } from "../services/board-members.js";
 import { assertApprovalDecisionAllowed } from "../services/approval-decision-policy.js";
 import type { OrgTreeNode } from "@paperclipai/shared";
 import {
@@ -3234,8 +3235,13 @@ export function agentRoutes(
   async function loadOrgChartTree(req: Request, companyId: string): Promise<OrgTreeNode[]> {
     const forest = await filterAgentsForActor(req, await svc.orgForCompany(companyId), companyId);
     const lean = forest.map((node) => toLeanOrgNode(node as Record<string, unknown>));
-    const users = await loadOrgChartUserSummaries(db, companyId, orgChartManagerUserIds(lean));
-    return buildOrgChartTree(lean, users);
+    const boardMemberIds = (await listBoardMembers(db)).members.map((member) => member.id);
+    const users = await loadOrgChartUserSummaries(
+      db,
+      companyId,
+      [...new Set([...boardMemberIds, ...orgChartManagerUserIds(lean)])],
+    );
+    return buildOrgChartTree(lean, users, boardMemberIds);
   }
 
   router.param("id", async (req, _res, next, rawId) => {

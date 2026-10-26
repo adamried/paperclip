@@ -210,6 +210,28 @@ export type AdminUserDirectoryEntry = {
   activeCompanyMembershipCount: number;
 };
 
+/** One seat on the Board (`instance_admin` user, never the agent sentinel). */
+export type BoardMember = {
+  id: string;
+  email: string | null;
+  name: string | null;
+  image: string | null;
+  /** `null` when the instance has not recorded an operator yet. */
+  isOperator: boolean | null;
+  memberSince: string;
+};
+
+export type BoardMembersResponse = {
+  members: BoardMember[];
+  operatorUserId: string | null;
+  /** Legacy: the `local-board` sentinel still holds `instance_admin`. */
+  legacySentinelHoldsAdmin: boolean;
+};
+
+export type BoardClaimPendingStatus = {
+  pending: boolean;
+};
+
 export type UserCompanyAccessEntry = {
   id: string;
   companyId: string;
@@ -383,7 +405,13 @@ export const accessApi = {
     api.get<BoardClaimStatus>(`/board-claim/${token}?code=${encodeURIComponent(code)}`),
 
   claimBoard: (token: string, code: string) =>
-    api.post<{ claimed: true; userId: string }>(`/board-claim/${token}/claim`, { code }),
+    api.post<{ claimed: true; userId: string; reconciliationPreview: null }>(`/board-claim/${token}/claim`, {
+      code,
+    }),
+
+  /** `{ pending }` only; the server never returns the claim secret here. */
+  getBoardClaimPendingStatus: () =>
+    api.get<BoardClaimPendingStatus>("/board-claim/status"),
 
   claimBootstrapAdmin: () =>
     api.post<{ claimed: true; userId: string }>("/bootstrap/claim", {}),
@@ -402,6 +430,9 @@ export const accessApi = {
 
   searchAdminUsers: (query: string) =>
     api.get<AdminUserDirectoryEntry[]>(`/admin/users?query=${encodeURIComponent(query)}`),
+
+  listBoardMembers: () =>
+    api.get<BoardMembersResponse>("/admin/board"),
 
   promoteInstanceAdmin: (userId: string) =>
     api.post(`/admin/users/${userId}/promote-instance-admin`, {}),

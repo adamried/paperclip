@@ -1,12 +1,14 @@
 import { and, eq } from "drizzle-orm";
 import { authUsers, userApprovalDecisionPolicies, type Db } from "@paperclipai/db";
 import type { ApprovalDecisionPolicy, UpdateApprovalDecisionPolicy } from "@paperclipai/shared";
+import { LOCAL_BOARD_SENTINEL_USER_ID } from "@paperclipai/shared";
 import { forbidden } from "../errors.js";
 import {
   findHumanManagerMembership,
   findHumanManagerMemberships,
   humanManagerMembershipIsActive,
 } from "./agent-manager.js";
+import { describeBoardAddressee } from "./board-members.js";
 
 /**
  * The single gate every approval decision path (web routes, the pending-agent
@@ -32,10 +34,14 @@ export async function assertApprovalDecisionAllowed(
     .from(authUsers)
     .where(eq(authUsers.id, approval.addresseeUserId))
     .then((rows) => rows[0] ?? null);
+  // An approval still addressed to the agent sentinel belongs to the real
+  // Board: name its members (or the recorded operator), never "the Board owner".
   const addresseeName =
-    addressee?.name?.trim()
-    || addressee?.email?.trim()
-    || (approval.addresseeUserId === "local-board" ? "the Board owner" : approval.addresseeUserId.slice(0, 8));
+    approval.addresseeUserId === LOCAL_BOARD_SENTINEL_USER_ID
+      ? await describeBoardAddressee(db)
+      : addressee?.name?.trim()
+        || addressee?.email?.trim()
+        || approval.addresseeUserId.slice(0, 8);
   throw forbidden(
     `Only ${addresseeName} can decide this approval. Ask them to decide it, or to allow any Board member in their profile settings.`,
     {

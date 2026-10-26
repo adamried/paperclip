@@ -1313,6 +1313,7 @@ const BOARD_ONLY_OPERATIONS = new Set([
   "GET /api/companies/stats",
   "GET /api/companies/issues",
   "GET /api/companies/import/jobs/{jobId}",
+  "GET /api/board-claim/status",
   "POST /api/board-claim/{token}/claim",
   "GET /api/cli-auth/me",
   "POST /api/companies/{companyId}/invites",
@@ -1497,6 +1498,7 @@ const INSTANCE_ADMIN_OPERATIONS = new Set([
   "POST /api/companies",
   "POST /api/plugins/install",
   "POST /api/instance/database-backups",
+  "GET /api/admin/board",
   "POST /api/admin/users/{userId}/promote-instance-admin",
   "POST /api/admin/users/{userId}/demote-instance-admin",
   "PATCH /api/admin/users/{userId}",
@@ -6314,6 +6316,20 @@ registry.registerPath({
   path: "/api/admin/users",
   tags: ["admin"],
   summary: "List all users (admin)",
+  description:
+    "Searchable user directory for instance admins. The `local-board` agent sentinel is never listed.",
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/admin/board",
+  tags: ["admin"],
+  summary: "List the Board",
+  description:
+    "The Board is every user holding `instance_admin`, excluding the `local-board` agent sentinel. " +
+    "Each member carries `isOperator` (true/false, or null when no operator is recorded). " +
+    "`legacySentinelHoldsAdmin` flags an instance where the sentinel still holds the role.",
   responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
 });
 
@@ -8991,6 +9007,17 @@ registry.registerPath({
 
 registry.registerPath({
   method: "get",
+  path: "/api/board-claim/status",
+  tags: ["access"],
+  summary: "Whether a legacy board claim is pending",
+  description:
+    "Authenticated mode, signed-in session actors only. Returns `{ pending: boolean }` and nothing else: " +
+    "no token, no code. When pending, an operator runs `paperclipai auth board-claim-url` on the host.",
+  responses: { 200: r.ok(), 401: r.unauthorized, 404: r.notFound },
+});
+
+registry.registerPath({
+  method: "get",
   path: "/api/board-claim/{token}",
   tags: ["access"],
   summary: "Get board claim details by token",
@@ -9003,8 +9030,12 @@ registry.registerPath({
   path: "/api/board-claim/{token}/claim",
   tags: ["access"],
   summary: "Claim a board token",
+  description:
+    "Promotes the signed-in user to `instance_admin` and demotes the `local-board` sentinel in one locked " +
+    "transaction. Concurrent claims with the same token produce exactly one winner; later attempts return 409. " +
+    "The response carries `reconciliationPreview` (null until identity reconciliation ships).",
   request: { params: z.object({ token: z.string() }) },
-  responses: { 200: r.ok(), 401: r.unauthorized, 404: r.notFound },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 404: r.notFound, 409: r.conflict },
 });
 
 registry.registerPath({

@@ -15,6 +15,7 @@ import {
   userSecretDeclarations,
 } from "@paperclipai/db";
 import type { PermissionKey, PrincipalType } from "@paperclipai/shared";
+import { LOCAL_BOARD_SENTINEL_USER_ID } from "@paperclipai/shared";
 import { conflict } from "../errors.js";
 import { assertAssignableAgent } from "./agent-assignability.js";
 import { authorizationService, type AuthorizationActor, type AuthorizationResource } from "./authorization.js";
@@ -754,12 +755,38 @@ export function accessService(db: Db) {
       .then((rows) => rows[0]);
   }
 
+  /**
+   * Removes a seat from the Board. The Board must keep at least one real
+   * member, so removing the last one is refused with 409; the `local-board`
+   * sentinel never counts as a member and may always be demoted (legacy
+   * cleanup). The table lock serializes concurrent demotions so two requests
+   * cannot each see "one other member remains".
+   */
   async function demoteInstanceAdmin(userId: string) {
-    return db
-      .delete(instanceUserRoles)
-      .where(and(eq(instanceUserRoles.userId, userId), eq(instanceUserRoles.role, "instance_admin")))
-      .returning()
-      .then((rows) => rows[0] ?? null);
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`lock table ${instanceUserRoles} in share row exclusive mode`);
+      const admins = await tx
+        .select({ userId: instanceUserRoles.userId })
+        .from(instanceUserRoles)
+        .where(eq(instanceUserRoles.role, "instance_admin"));
+      if (!admins.some((row) => row.userId === userId)) return null;
+      if (userId !== LOCAL_BOARD_SENTINEL_USER_ID) {
+        const remainingMembers = admins.filter(
+          (row) => row.userId !== userId && row.userId !== LOCAL_BOARD_SENTINEL_USER_ID,
+        );
+        if (remainingMembers.length === 0) {
+          throw conflict(
+            "The Board must keep at least one member. Add another Board member before removing this one.",
+            { code: "board_last_member" },
+          );
+        }
+      }
+      return tx
+        .delete(instanceUserRoles)
+        .where(and(eq(instanceUserRoles.userId, userId), eq(instanceUserRoles.role, "instance_admin")))
+        .returning()
+        .then((rows) => rows[0] ?? null);
+    });
   }
 
   async function listUserCompanyAccess(userId: string) {
