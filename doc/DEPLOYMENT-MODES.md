@@ -183,19 +183,61 @@ For `authenticated/public`, browser first-admin claim is intentionally disabled.
 Public deployments must use the high-entropy bootstrap invite path unless a
 future public-hosted setup design explicitly changes this policy.
 
-## 9. Current Code Reality (As Of 2026-02-23)
+## 9. Account Profile, Email, and Password Reset
+
+An account is one `authUsers` row for the life of the instance. Changing its
+name or email never creates a second user; sessions, memberships, assignments,
+and provider defaults keep pointing at the same `userId`.
+
+Self-service (Settings → Profile, `authenticated` mode only):
+
+- Display name goes through `PATCH /api/auth/profile`.
+- Email goes through Better Auth's `POST /api/auth/change-email`, enabled in
+  `server/src/auth/better-auth.ts` with `updateEmailWithoutVerification`.
+  Paperclip configures no mail transport, so for an account whose email is not
+  verified the change applies immediately and `emailVerified` stays `false`.
+  Better Auth requires a fresh session for this call (`session.freshAge`,
+  one day by default); sign out and back in if it refuses. When the new address
+  already belongs to another account, Better Auth answers success without
+  changing anything, so the page re-reads the session and reports that the
+  address did not move.
+- In `local_trusted` mode there is no Better Auth mount, so the email field is
+  read-only there.
+
+Instance administration (Settings → Instance settings → Access):
+
+- `PATCH /api/admin/users/:userId` lets an instance admin change another user's
+  name and email. Email uniqueness is enforced (`409` on conflict), the change
+  resets `emailVerified`, and the target's existing sessions keep resolving to
+  the same `userId`. One `activity_log` row per company records the change
+  (`admin_user.profile_updated`).
+- An admin cannot change their own email through this route; that goes
+  through the self-service endpoint above, which runs on a fresh session rather
+  than on instance authority alone.
+
+Password reset requires mail configuration. Paperclip ships no mail transport,
+so Better Auth's forgot-password and email-verification flows are not wired up
+and there is no reset link to send. Until an operator configures one (a future
+change; see `doc/plans/2026-10-26-operator-identity-and-board-ownership.md`,
+Spec 4), recovery for a lost password is operator-side: an instance admin can
+move the account to an address the person controls with the admin route above,
+but cannot reset the password. Keep at least one working credential for an
+instance admin, and treat a verified-email account's inability to change its
+own email until mail exists as expected behaviour.
+
+## 10. Current Code Reality (As Of 2026-02-23)
 
 - runtime values are `local_trusted | authenticated`
 - `authenticated` uses Better Auth sessions and bootstrap invite flow
 - `local_trusted` ensures a real local Board user principal in `authUsers` with `instance_user_roles` admin access
 - company creation ensures creator membership in `company_memberships` so user assignment/access flows remain consistent
 
-## 10. Naming and Compatibility Policy
+## 11. Naming and Compatibility Policy
 
 - canonical naming is `local_trusted` and `authenticated` with `private/public` exposure
 - no long-term compatibility alias layer for discarded naming variants
 
-## 11. Relationship to Other Docs
+## 12. Relationship to Other Docs
 
 - implementation plan: `doc/plans/2026-02-23-deployment-auth-mode-consolidation.md`
 - V1 contract: `doc/SPEC-implementation.md`

@@ -157,6 +157,22 @@ export const searchAdminUsersQuerySchema = z.object({
 
 export type SearchAdminUsersQuery = z.infer<typeof searchAdminUsersQuerySchema>;
 
+/**
+ * Instance-admin edit of another user's account fields
+ * (`PATCH /api/admin/users/:userId`). Email is normalized to lowercase so the
+ * uniqueness check and Better Auth's own lowercase sign-in lookup agree.
+ */
+export const updateAdminUserSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120).optional(),
+    email: z.string().trim().toLowerCase().email().max(320).optional(),
+  })
+  .refine((value) => value.name !== undefined || value.email !== undefined, {
+    message: "Provide a name or an email to update",
+  });
+
+export type UpdateAdminUser = z.infer<typeof updateAdminUserSchema>;
+
 const profileImageAssetPathPattern = /^\/api\/assets\/[^/?#]+\/content(?:\?[^#]*)?(?:#.*)?$/;
 
 function isValidProfileImage(value: string): boolean {

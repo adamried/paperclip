@@ -14,7 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Router } from "express";
 import type { Request } from "express";
-import { and, desc, eq, gt, inArray, isNotNull, isNull, lte, ne } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, isNull, lte, ne, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   assets,
@@ -39,6 +39,7 @@ import {
   listJoinRequestsQuerySchema,
   resolveCliAuthChallengeSchema,
   searchAdminUsersQuerySchema,
+  updateAdminUserSchema,
   updateCompanyMemberWithPermissionsSchema,
   updateCompanyMemberSchema,
   archiveCompanyMemberSchema,
@@ -4723,6 +4724,140 @@ export function accessRoutes(
       })),
     );
   });
+
+  /**
+   * Instance-admin edit of another user's account fields. Email changes made
+   * here apply immediately and reset `emailVerified`, since no mail transport
+   * exists to verify the new address. An admin's own email is off-limits on
+   * this route on purpose: self-service goes through Better Auth's
+   * `/api/auth/change-email`, which runs on a fresh session rather than on
+   * instance authority alone. The user row keeps its id, so the target's
+   * existing sessions keep resolving to the same `userId`.
+   */
+  router.patch(
+    "/admin/users/:userId",
+    validate(updateAdminUserSchema),
+    async (req, res) => {
+      await assertInstanceAdmin(req);
+      assertAccessAdminVisible();
+      const userId = (req.params.userId as string).trim();
+      const patch = updateAdminUserSchema.parse(req.body);
+
+      const existing = await db
+        .select({
+          id: authUsers.id,
+          email: authUsers.email,
+          name: authUsers.name,
+          image: authUsers.image,
+        })
+        .from(authUsers)
+        .where(eq(authUsers.id, userId))
+        .then((rows) => rows[0] ?? null);
+      if (!existing) throw notFound("User not found");
+
+      const nextEmail =
+        patch.email !== undefined && patch.email !== existing.email.toLowerCase()
+          ? patch.email
+          : undefined;
+      const nextName =
+        patch.name !== undefined && patch.name !== existing.name ? patch.name : undefined;
+
+      if (nextEmail !== undefined && req.actor.userId === userId) {
+        throw forbidden(
+          "Change your own email from your profile page, not through user administration",
+          { code: "self_email_change_not_allowed" },
+        );
+      }
+
+      if (nextEmail !== undefined) {
+        const taken = await db
+          .select({ id: authUsers.id })
+          .from(authUsers)
+          .where(and(sql`lower(${authUsers.email}) = ${nextEmail}`, ne(authUsers.id, userId)))
+          .then((rows) => rows[0] ?? null);
+        if (taken) {
+          throw conflict("Email is already in use by another user", { code: "email_in_use" });
+        }
+      }
+
+      let user = existing;
+      if (nextName !== undefined || nextEmail !== undefined) {
+        const updated = await db
+          .update(authUsers)
+          .set({
+            ...(nextName !== undefined ? { name: nextName } : {}),
+            ...(nextEmail !== undefined ? { email: nextEmail, emailVerified: false } : {}),
+            updatedAt: new Date(),
+          })
+          .where(eq(authUsers.id, userId))
+          .returning({
+            id: authUsers.id,
+            email: authUsers.email,
+            name: authUsers.name,
+            image: authUsers.image,
+          })
+          .then((rows) => rows[0] ?? null)
+          .catch((error: unknown) => {
+            // A concurrent sign-up or admin edit can win the same address
+            // between the lookup above and this write.
+            if ((error as { code?: string } | null)?.code === "23505") {
+              throw conflict("Email is already in use by another user", { code: "email_in_use" });
+            }
+            throw error;
+          });
+        if (!updated) throw notFound("User not found");
+        user = updated;
+
+        // User administration is instance-wide, so the audit row goes to every
+        // company's activity feed; `activity_log` has no company-less shape.
+        const changedFields = [
+          ...(nextName !== undefined ? ["name"] : []),
+          ...(nextEmail !== undefined ? ["email"] : []),
+        ];
+        const companyIds = await db
+          .select({ id: companies.id })
+          .from(companies)
+          .then((rows) => rows.map((row) => row.id));
+        await Promise.all(
+          companyIds.map((companyId) =>
+            logActivity(db, {
+              companyId,
+              actorType: "user",
+              actorId: req.actor.userId ?? "board",
+              action: "admin_user.profile_updated",
+              entityType: "user",
+              entityId: userId,
+              details: {
+                changedFields,
+                ...(nextName !== undefined ? { name: nextName } : {}),
+                ...(nextEmail !== undefined
+                  ? { email: nextEmail, previousEmail: existing.email }
+                  : {}),
+              },
+            }),
+          ),
+        );
+      }
+
+      const activeCompanyMembershipCount = await db
+        .select({ id: companyMemberships.id })
+        .from(companyMemberships)
+        .where(
+          and(
+            eq(companyMemberships.principalType, "user"),
+            eq(companyMemberships.principalId, userId),
+            eq(companyMemberships.status, "active"),
+          ),
+        )
+        .then((rows) => rows.length);
+
+      res.json({
+        ...toUserProfile(user),
+        isInstanceAdmin: await access.isInstanceAdmin(userId),
+        activeCompanyMembershipCount,
+      });
+    },
+  );
 
   router.post(
     "/admin/users/:userId/demote-instance-admin",

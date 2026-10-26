@@ -1,4 +1,4 @@
-import type { AgentAdapterType, JoinRequest, PermissionKey } from "@paperclipai/shared";
+import type { AgentAdapterType, JoinRequest, PermissionKey, UpdateAdminUser } from "@paperclipai/shared";
 import { api } from "./client";
 
 export type HumanCompanyRole = "owner" | "admin" | "operator" | "viewer";
@@ -408,6 +408,9 @@ export const accessApi = {
 
   demoteInstanceAdmin: (userId: string) =>
     api.post(`/admin/users/${userId}/demote-instance-admin`, {}),
+
+  updateAdminUser: (userId: string, input: UpdateAdminUser) =>
+    api.patch<AdminUserDirectoryEntry>(`/admin/users/${userId}`, input),
 
   getUserCompanyAccess: (userId: string) =>
     api.get<UserCompanyAccessResponse>(`/admin/users/${userId}/company-access`),

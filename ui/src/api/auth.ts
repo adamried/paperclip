@@ -194,6 +194,18 @@ export const authApi = {
   updateProfile: async (input: UpdateCurrentUserProfile): Promise<CurrentUserProfile> =>
     authPatch("/profile", input, (payload) => currentUserProfileSchema.parse(payload)),
 
+  /**
+   * Better Auth's own change-email endpoint; mounted only in `authenticated`
+   * mode. With no mail transport configured the change applies immediately for
+   * an unverified account. Better Auth answers `{ status: true }` without
+   * changing anything when the address is already taken (to avoid leaking
+   * which emails exist), so callers re-read the session to learn whether the
+   * email actually moved.
+   */
+  changeEmail: async (input: { newEmail: string }): Promise<void> => {
+    await authPost("/change-email", { newEmail: input.newEmail });
+  },
+
   signOut: async (): Promise<SignOutResult | null> => {
     const payload = await authPost("/sign-out", {});
     if (!payload || typeof payload !== "object") return null;

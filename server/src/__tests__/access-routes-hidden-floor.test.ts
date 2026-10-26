@@ -67,6 +67,10 @@ describe("operator-hidden access admin floor", () => {
     ["promote", () => request(app).post("/api/admin/users/user-1/promote-instance-admin")],
     ["demote", () => request(app).post("/api/admin/users/user-1/demote-instance-admin")],
     [
+      "profile write",
+      () => request(app).patch("/api/admin/users/user-1").send({ name: "Renamed" }),
+    ],
+    [
       "company access write",
       () => request(app).put("/api/admin/users/user-1/company-access").send({ companyIds: [] }),
     ],
