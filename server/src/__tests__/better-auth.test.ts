@@ -4,6 +4,7 @@ import { getCookies } from "better-auth/cookies";
 import {
   buildBetterAuthAdvancedOptions,
   buildBetterAuthRateLimitOptions,
+  buildBetterAuthUserOptions,
   deriveAuthCookiePrefix,
   deriveAuthTrustedOrigins,
   shouldDisableSecureAuthCookies,
@@ -240,5 +241,19 @@ describe("Better Auth cookie scoping", () => {
     ]));
     expect(trustedOrigins).not.toContain("https://board.example.test:3100");
     expect(trustedOrigins).not.toContain("http://board.example.test:3100");
+  });
+});
+
+describe("Better Auth account self-service", () => {
+  it("enables change-email with the immediate path for unverified accounts", () => {
+    // No mail transport is configured, so this is the only path Better Auth's
+    // `/change-email` can take; without `updateEmailWithoutVerification` the
+    // endpoint answers "Verification email isn't enabled" for every account.
+    expect(buildBetterAuthUserOptions()).toEqual({
+      changeEmail: {
+        enabled: true,
+        updateEmailWithoutVerification: true,
+      },
+    });
   });
 });

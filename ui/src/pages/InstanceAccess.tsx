@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Shield, ShieldCheck } from "lucide-react";
-import { accessApi } from "@/api/access";
+import { accessApi, type AdminUserDirectoryEntry } from "@/api/access";
 import { ApiError } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { Card } from "@/components/ui/card";
 import { companyDirectoryQueryOptions, useAccountIdentity } from "@/api/companies-query";
@@ -196,6 +198,20 @@ export function InstanceAccess() {
                 </Button>
               </div>
 
+              {selectedUser ? (
+                <AdminUserAccountForm
+                  key={selectedUser.id}
+                  user={selectedUser}
+                  isSelf={selectedUser.id === accountUserId}
+                  onSaved={async () => {
+                    await queryClient.invalidateQueries({ queryKey: queryKeys.access.adminUsers(search) });
+                    await queryClient.invalidateQueries({
+                      queryKey: queryKeys.access.userCompanyAccess(selectedUser.id),
+                    });
+                  }}
+                />
+              ) : null}
+
               <div className="space-y-3">
                 <div>
                   <h2 className="text-sm font-semibold">Organization access</h2>
@@ -263,5 +279,104 @@ export function InstanceAccess() {
         </Card>
       </div>
     </div>
+  );
+}
+
+/**
+ * Instance-admin edit of the selected user's name and sign-in email. Keyed by
+ * user id at the call site so drafts reset when the selection changes. The
+ * email field is disabled for the admin's own row: the server refuses that
+ * change here and self-service lives on the Profile page.
+ */
+function AdminUserAccountForm({
+  user,
+  isSelf,
+  onSaved,
+}: {
+  user: AdminUserDirectoryEntry;
+  isSelf: boolean;
+  onSaved: () => Promise<void> | void;
+}) {
+  const { pushToast } = useToast();
+  const [name, setName] = useState(user.name ?? "");
+  const [email, setEmail] = useState(user.email ?? "");
+  const [error, setError] = useState<string | null>(null);
+
+  const nextName = name.trim();
+  const nextEmail = email.trim();
+  const nameChanged = nextName.length > 0 && nextName !== (user.name ?? "");
+  const emailChanged =
+    !isSelf && nextEmail.length > 0 && nextEmail.toLowerCase() !== (user.email ?? "").toLowerCase();
+
+  const updateMutation = useMutation({
+    mutationFn: () =>
+      accessApi.updateAdminUser(user.id, {
+        ...(nameChanged ? { name: nextName } : {}),
+        ...(emailChanged ? { email: nextEmail } : {}),
+      }),
+    onSuccess: async (updated) => {
+      setError(null);
+      setName(updated.name ?? "");
+      setEmail(updated.email ?? "");
+      await onSaved();
+      pushToast({ title: "Account details updated", tone: "success" });
+    },
+    onError: (err) => {
+      if (err instanceof ApiError && err.status === 409) {
+        setError("That email already belongs to another user.");
+        return;
+      }
+      setError(err instanceof Error ? err.message : "Failed to update account details.");
+    },
+  });
+
+  return (
+    <form
+      className="space-y-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!nameChanged && !emailChanged) return;
+        updateMutation.mutate();
+      }}
+    >
+      <div>
+        <h2 className="text-sm font-semibold">Account details</h2>
+        <p className="text-sm text-muted-foreground">
+          Name and sign-in email for this user. An email change applies right away and is not verified by mail.
+        </p>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor="admin-user-name">Name</Label>
+          <Input
+            id="admin-user-name"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            maxLength={120}
+            disabled={updateMutation.isPending}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="admin-user-email">Email</Label>
+          <Input
+            id="admin-user-email"
+            type="email"
+            autoComplete="off"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            disabled={isSelf || updateMutation.isPending}
+          />
+          {isSelf ? (
+            <p className="text-xs text-muted-foreground">Change your own email from your profile page.</p>
+          ) : null}
+        </div>
+      </div>
+      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      <div className="flex justify-end">
+        <Button type="submit" disabled={updateMutation.isPending || (!nameChanged && !emailChanged)}>
+          {updateMutation.isPending ? "Saving…" : "Save account details"}
+        </Button>
+      </div>
+    </form>
   );
 }

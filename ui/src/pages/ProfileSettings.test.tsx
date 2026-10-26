@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sanitizeAssetNamespace } from "@paperclipai/shared";
+import { queryKeys } from "../lib/queryKeys";
 import { ProfileSettings } from "./ProfileSettings";
 
 const mockAuthApi = vi.hoisted(() => ({
@@ -13,6 +14,7 @@ const mockAuthApi = vi.hoisted(() => ({
   signUpEmail: vi.fn(),
   getProfile: vi.fn(),
   updateProfile: vi.fn(),
+  changeEmail: vi.fn(),
   signOut: vi.fn(),
 }));
 
@@ -25,6 +27,10 @@ const mockSetBreadcrumbs = vi.hoisted(() => vi.fn());
 
 vi.mock("@/api/auth", () => ({
   authApi: mockAuthApi,
+  AuthApiError: class AuthApiError extends Error {
+    status = 0;
+    code: string | null = null;
+  },
 }));
 
 vi.mock("@/api/assets", () => ({
@@ -183,6 +189,96 @@ describe("ProfileSettings", () => {
       name: "Jane Example",
       image: "/api/assets/asset-1/content",
     });
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("keeps the email read-only when Better Auth is not mounted", async () => {
+    const root = createRoot(container);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    // No health entry seeded: the page cannot know it runs in authenticated
+    // mode, so it must not offer a change-email action it cannot complete.
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <ProfileSettings />
+        </QueryClientProvider>,
+      );
+    });
+    await flushReact();
+    await flushReact();
+
+    const emailInput = container.querySelector("#profile-email") as HTMLInputElement | null;
+    expect(emailInput).not.toBeNull();
+    expect(emailInput?.disabled).toBe(true);
+    expect(emailInput?.value).toBe("jane@example.com");
+    expect(container.textContent).not.toContain("Update email");
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("changes the sign-in email through Better Auth in authenticated mode and reports the result", async () => {
+    let currentEmail = "jane@example.com";
+    mockAuthApi.getSession.mockImplementation(async () => ({
+      session: { id: "session-1", userId: "user-1" },
+      user: {
+        id: "user-1",
+        name: "Jane Example",
+        email: currentEmail,
+        image: null,
+      },
+    }));
+    mockAuthApi.changeEmail.mockImplementation(async (input: { newEmail: string }) => {
+      currentEmail = input.newEmail;
+    });
+
+    const root = createRoot(container);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    queryClient.setQueryData(queryKeys.health, { status: "ok", deploymentMode: "authenticated" });
+
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <ProfileSettings />
+        </QueryClientProvider>,
+      );
+    });
+    await flushReact();
+    await flushReact();
+
+    const emailInput = container.querySelector("#profile-email") as HTMLInputElement | null;
+    expect(emailInput).not.toBeNull();
+    expect(emailInput?.disabled).toBe(false);
+
+    const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    await act(async () => {
+      valueSetter?.call(emailInput, "jane.moved@example.com");
+      emailInput?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flushReact();
+
+    const emailForm = emailInput?.closest("form");
+    expect(emailForm).not.toBeNull();
+    await act(async () => {
+      emailForm?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    await flushReact();
+    await flushReact();
+
+    expect(mockAuthApi.changeEmail).toHaveBeenCalledWith({ newEmail: "jane.moved@example.com" });
+    // The page re-reads the session rather than trusting Better Auth's
+    // always-successful answer, and the header reflects the new address.
+    expect(container.textContent).toContain("Email updated");
+    expect(container.textContent).toContain("jane.moved@example.com");
 
     await act(async () => {
       root.unmount();

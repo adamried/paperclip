@@ -1,9 +1,10 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Camera, LoaderCircle, Save, Trash2, UserRoundPen } from "lucide-react";
+import { Camera, LoaderCircle, Mail, Save, Trash2, UserRoundPen } from "lucide-react";
 import type { AuthSession, CurrentUserProfile, UpdateCurrentUserProfile } from "@paperclipai/shared";
-import { authApi } from "@/api/auth";
+import { authApi, AuthApiError } from "@/api/auth";
 import { assetsApi } from "@/api/assets";
+import { healthApi } from "@/api/health";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useCompany } from "../context/CompanyContext";
 import { queryKeys } from "../lib/queryKeys";
@@ -29,12 +30,23 @@ export function ProfileSettings() {
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
   const [name, setName] = useState("");
   const [image, setImage] = useState("");
+  const [emailDraft, setEmailDraft] = useState("");
+  const [emailNotice, setEmailNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const sessionQuery = useQuery({
     queryKey: queryKeys.auth.session,
     queryFn: () => authApi.getSession(),
     retry: false,
   });
+  // Read from the app-wide health cache; CloudAccessGate owns the fetch. The
+  // email field is only editable where Better Auth is mounted, which is
+  // `authenticated` mode — `local_trusted` has no `/api/auth/change-email`.
+  const healthQuery = useQuery({
+    queryKey: queryKeys.health,
+    queryFn: () => healthApi.get(),
+    enabled: false,
+  });
+  const canChangeEmail = healthQuery.data?.deploymentMode === "authenticated";
 
   useEffect(() => {
     setBreadcrumbs([
@@ -48,6 +60,7 @@ export function ProfileSettings() {
     if (!session) return;
     setName(session.user.name ?? "");
     setImage(session.user.image ?? "");
+    setEmailDraft(session.user.email ?? "");
   }, [sessionQuery.data]);
 
   function syncSessionProfile(profile: CurrentUserProfile) {
@@ -120,6 +133,42 @@ export function ProfileSettings() {
     },
   });
 
+  const changeEmailMutation = useMutation({
+    mutationFn: async (newEmail: string) => {
+      await authApi.changeEmail({ newEmail });
+      // Better Auth answers success even when the address is taken, so the
+      // session is the only honest source for whether the email moved.
+      return authApi.getSession();
+    },
+    onSuccess: (refreshed, newEmail) => {
+      if (refreshed) {
+        queryClient.setQueryData<AuthSession | null>(queryKeys.auth.session, refreshed);
+      }
+      const applied = (refreshed?.user.email ?? "").toLowerCase() === newEmail.toLowerCase();
+      if (applied) {
+        setActionError(null);
+        setEmailNotice("Email updated. Sign in with the new address next time.");
+        return;
+      }
+      setEmailNotice(null);
+      setActionError("Email was not changed. That address may already belong to another account.");
+    },
+    onError: (error) => {
+      setEmailNotice(null);
+      if (error instanceof AuthApiError && error.code === "SESSION_NOT_FRESH") {
+        setActionError("Changing your email needs a recent sign-in. Sign out, sign back in, and try again.");
+        return;
+      }
+      if (error instanceof AuthApiError && /verification email/i.test(error.message)) {
+        setActionError(
+          "This account's email is verified, so changing it needs mail configuration. Ask an instance admin to change it for you.",
+        );
+        return;
+      }
+      setActionError(error instanceof Error ? error.message : "Failed to change email.");
+    },
+  });
+
   if (sessionQuery.isLoading) {
     return <div className="text-sm text-muted-foreground">Loading profile...</div>;
   }
@@ -136,6 +185,9 @@ export function ProfileSettings() {
   const currentImage = image.trim() || null;
   const initials = deriveInitials(currentName);
   const isSavingProfile = updateMutation.isPending || uploadAvatarMutation.isPending || removeAvatarMutation.isPending;
+  const currentEmail = sessionQuery.data.user.email ?? "";
+  const nextEmail = emailDraft.trim();
+  const emailChanged = nextEmail.length > 0 && nextEmail.toLowerCase() !== currentEmail.toLowerCase();
   const uploadHint = selectedCompany
     ? `Stored in Paperclip file storage for ${selectedCompany.name}.`
     : "Select an organization to upload an avatar into Paperclip storage.";
@@ -229,14 +281,14 @@ export function ProfileSettings() {
           </div>
         </Card>
 
-        <form
-          className="grid gap-6 md:grid-cols-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            updateMutation.mutate({ name: resolveProfileName(), image: image.trim() || null });
-          }}
-        >
-          <div className="space-y-2">
+        <div className="grid gap-6 md:grid-cols-2">
+          <form
+            className="space-y-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              updateMutation.mutate({ name: resolveProfileName(), image: image.trim() || null });
+            }}
+          >
             <Label htmlFor="profile-name">Display name</Label>
             <Input
               id="profile-name"
@@ -248,28 +300,55 @@ export function ProfileSettings() {
             <p className="text-xs text-muted-foreground">
               Shown in the sidebar account footer and comment author surfaces.
             </p>
-          </div>
+            <div className="flex justify-end pt-2">
+              <Button type="submit" disabled={isSavingProfile || !name.trim()}>
+                {updateMutation.isPending ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}
+                {updateMutation.isPending ? "Saving..." : "Save profile"}
+              </Button>
+            </div>
+          </form>
 
-          <div className="space-y-2">
+          <form
+            className="space-y-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!canChangeEmail || !emailChanged) return;
+              changeEmailMutation.mutate(nextEmail);
+            }}
+          >
             <Label htmlFor="profile-email">Email</Label>
             <Input
               id="profile-email"
-              value={sessionQuery.data.user.email ?? ""}
-              readOnly
-              disabled
+              type="email"
+              autoComplete="email"
+              value={canChangeEmail ? emailDraft : currentEmail}
+              onChange={(event) => {
+                setEmailDraft(event.target.value);
+                setEmailNotice(null);
+              }}
+              readOnly={!canChangeEmail}
+              disabled={!canChangeEmail || changeEmailMutation.isPending}
             />
             <p className="text-xs text-muted-foreground">
-              Email is managed by your auth session and is read-only here.
+              {canChangeEmail
+                ? "Used to sign in. The change applies right away; no verification mail is sent."
+                : "Email can be changed once this instance runs in authenticated mode."}
             </p>
-          </div>
-
-          <div className="md:col-span-2 flex justify-end">
-            <Button type="submit" disabled={isSavingProfile || !name.trim()}>
-              {updateMutation.isPending ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}
-              {updateMutation.isPending ? "Saving..." : "Save profile"}
-            </Button>
-          </div>
-        </form>
+            {emailNotice ? <p className="text-xs text-foreground">{emailNotice}</p> : null}
+            {canChangeEmail ? (
+              <div className="flex justify-end pt-2">
+                <Button
+                  type="submit"
+                  variant="outline"
+                  disabled={changeEmailMutation.isPending || !emailChanged}
+                >
+                  {changeEmailMutation.isPending ? <LoaderCircle className="size-4 animate-spin" /> : <Mail className="size-4" />}
+                  {changeEmailMutation.isPending ? "Updating..." : "Update email"}
+                </Button>
+              </div>
+            ) : null}
+          </form>
+        </div>
 
         <InboxAgentPolicyControl companyId={selectedCompanyId} />
 

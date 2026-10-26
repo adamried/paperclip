@@ -175,6 +175,7 @@ import {
   companyPortabilityImportSchema,
   // Access / membership
   acceptInviteSchema,
+  updateAdminUserSchema,
   createCompanyInviteSchema,
   createOpenClawInvitePromptSchema,
   claimJoinRequestApiKeySchema,
@@ -1498,6 +1499,7 @@ const INSTANCE_ADMIN_OPERATIONS = new Set([
   "POST /api/instance/database-backups",
   "POST /api/admin/users/{userId}/promote-instance-admin",
   "POST /api/admin/users/{userId}/demote-instance-admin",
+  "PATCH /api/admin/users/{userId}",
   "PUT /api/admin/users/{userId}/company-access",
 ]);
 
@@ -6313,6 +6315,27 @@ registry.registerPath({
   tags: ["admin"],
   summary: "List all users (admin)",
   responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
+});
+
+registry.registerPath({
+  method: "patch",
+  path: "/api/admin/users/{userId}",
+  tags: ["admin"],
+  summary: "Update a user's name or email (admin)",
+  description:
+    "Instance admins may change another user's display name and email. The email must be unique (409 on conflict). An admin cannot change their own email here; self-service goes through /api/auth/change-email.",
+  request: {
+    params: z.object({ userId: z.string() }),
+    body: jsonBody(updateAdminUserSchema),
+  },
+  responses: {
+    200: r.ok(),
+    400: r.badRequest,
+    401: r.unauthorized,
+    403: r.forbidden,
+    404: r.notFound,
+    409: r.conflict,
+  },
 });
 
 // ─── Auth / profile ──────────────────────────────────────────────────────────

@@ -64,6 +64,28 @@ export function buildBetterAuthAdvancedOptions(input: { disableSecureCookies: bo
   };
 }
 
+/**
+ * Account self-service options for Better Auth's `user` block.
+ *
+ * `changeEmail` is enabled so an operator who started local can move the
+ * account to a new address later (for example before migrating to a hosted
+ * instance that sends password-reset mail). Paperclip configures no mail
+ * transport, so Better Auth has exactly one path available: when the account's
+ * email is not verified, `updateEmailWithoutVerification` applies the change
+ * immediately and leaves `emailVerified` false. An account whose email is
+ * already verified cannot change it until an
+ * `emailVerification.sendVerificationEmail` transport exists; at that point
+ * Better Auth's own verification flow takes over unchanged.
+ */
+export function buildBetterAuthUserOptions() {
+  return {
+    changeEmail: {
+      enabled: true,
+      updateEmailWithoutVerification: true,
+    },
+  };
+}
+
 export function shouldEnableAuthRateLimit(input: {
   deploymentMode: Config["deploymentMode"];
   deploymentExposure?: Config["deploymentExposure"];
@@ -275,6 +297,7 @@ export function createBetterAuthInstance(db: Db, config: Config, trustedOrigins:
       requireEmailVerification: false,
       disableSignUp: config.authDisableSignUp,
     },
+    user: buildBetterAuthUserOptions(),
     rateLimit: buildBetterAuthRateLimitOptions({
       deploymentMode: config.deploymentMode,
       deploymentExposure: config.deploymentExposure,
