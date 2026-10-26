@@ -44,7 +44,7 @@ These decisions close open questions from `SPEC.md` for V1.
 | Recovery | Liveness/watchdog recovery preserves explicit ownership: continue interrupted local conversations with bounded fresh turns and preserved history, never replay tool calls automatically; retain native ownership and real execution gates; preserve verified stop evidence and reconsider saved post-stop user messages after cleanup; otherwise open visible source-scoped recovery actions by default, use issue-backed recovery only for independent repair work, or require human escalation (see `doc/execution-semantics.md`) |
 | Agent adapters | Built-in `process`, `http`, local CLI/session adapters, and OpenClaw gateway support; external adapters can also be loaded through the adapter plugin flow |
 | Plugin framework | Local/self-hosted early plugin runtime is in scope; cloud marketplace and packaged public distribution remain out of scope |
-| Auth | Mode-dependent human auth (`local_trusted` implicit board in current code; authenticated mode uses sessions), API keys for agents |
+| Auth | Mode-dependent human auth (`local_trusted` acts as the instance's dedicated operator user recorded in `instance_settings.general.operatorUserId`; `local-board` is only the agent sentinel; authenticated mode uses sessions), API keys for agents |
 | Budget period | Monthly UTC calendar window |
 | Budget enforcement | Soft alerts + hard limit auto-pause |
 | Deployment modes | Canonical model is `local_trusted` + `authenticated` with `private/public` exposure policy (see `doc/DEPLOYMENT-MODES.md`) |
@@ -558,6 +558,13 @@ Detailed ownership, execution, blocker, active-run watchdog, crash-recovery, and
 - Identity invariants (see `doc/plans/2026-10-26-operator-identity-and-board-ownership.md`):
   - The Board is the set of users holding `instance_admin`, excluding the `local-board` agent-posting sentinel. Agents are never Board members. `GET /api/admin/board` lists it; the Board must keep at least one member (removing the last is refused with `409`).
   - A legacy `authenticated` instance whose only `instance_admin` is `local-board` is claimed through the hash-persisted board-claim challenge (`instance_settings.general.boardClaimChallenge`), issued at startup or by `paperclipai auth board-claim-url`, with exactly one winner under concurrency.
+
+Identity invariants (see `doc/DEPLOYMENT-MODES.md` section 6):
+
+- The operator is one user id for the life of the instance. In `local_trusted` mode it is a dedicated `authUsers` row created at first start and recorded in `instance_settings.general.operatorUserId`; enabling login attaches credentials to that row and never creates a second human.
+- `local-board` is the agent sentinel (`AGENT_SENTINEL_USER_ID`), not a Board seat: on new instances it holds no `instance_admin` role and no company membership. A header-less local request carrying `X-Paperclip-Run-Id` acts under it so agent output is never credited to the operator.
+- A board-typed actor with no `userId` fails closed (`requireActorUserId`); routes never substitute the sentinel.
+- Existing instances where the sentinel still holds `instance_admin` are legacy: startup changes zero rows, resolves the operator to the sentinel in memory, and `/api/health` reports `operatorIdentity: "legacy"`. Migration is an explicit host action.
 
 ## 9.2 Agent Auth
 
@@ -1678,7 +1685,7 @@ Export/import behavior in V1:
 
 ### Experimental task-backed agent chat (2026-09-10)
 
-`enableAgentChat` is an instance experimental flag, default false. Conversation containers remain issues, unique by `(company_id, conversation_agent_id, conversation_user_id)`. The authenticated board actor supplies ownership; local trusted mode uses `local-board`. Ordinary company task access applies. A conversation's agent assignment and identity are immutable through ordinary updates; terminal status mutations are rejected.
+`enableAgentChat` is an instance experimental flag, default false. Conversation containers remain issues, unique by `(company_id, conversation_agent_id, conversation_user_id)`. The authenticated board actor supplies ownership; local trusted mode uses the operator user (the legacy sentinel `local-board` only on unmigrated instances). Ordinary company task access applies. A conversation's agent assignment and identity are immutable through ordinary updates; terminal status mutations are rejected.
 
 `GET /api/companies/:companyId/chats/:agentRef` reads an existing conversation or null. `POST` atomically resolves its issue on first send/upload. Existing issue comment, attachment, document, interaction, and run APIs apply thereafter. User chat comments require an idempotent UUID `clientRequestId`. Conversation delivery preserves comment order through the existing issue execution queue; the durable comment outbox repairs the commit-to-enqueue crash window.
 

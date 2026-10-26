@@ -21,11 +21,21 @@ import {
   rekeyCompanyIssueIdentifiers,
 } from "../services/issue-prefix.js";
 import { verifyLocalAgentJwt } from "../agent-auth-jwt.js";
-import { isUuidLike, normalizeAgentApiKeyScope, type DeploymentMode } from "@paperclipai/shared";
+import {
+  AGENT_SENTINEL_USER_ID,
+  isUuidLike,
+  normalizeAgentApiKeyScope,
+  type DeploymentMode,
+} from "@paperclipai/shared";
 import type { BetterAuthSessionResult } from "../auth/better-auth.js";
 import { logger } from "./logger.js";
 import { captureRunIdentity } from "../services/run-identity.js";
 import { boardAuthService } from "../services/board-auth.js";
+import {
+  AGENT_SENTINEL_USER_NAME,
+  getOperatorIdentity,
+  type OperatorIdentity,
+} from "../operator-identity.js";
 
 const CLOUD_TENANT_WRITE_DEBOUNCE_MS = 5_000;
 const CLOUD_TENANT_WRITE_DEBOUNCE_MAX = 1_000;
@@ -210,6 +220,48 @@ async function auditAgentKeyMissingResponsibleUser(
 interface ActorMiddlewareOptions {
   deploymentMode: DeploymentMode;
   resolveSession?: (req: Request) => Promise<BetterAuthSessionResult | null>;
+  /**
+   * The operator identity header-less `local_trusted` requests act as. Defaults
+   * to the identity startup resolved (`ensureOperatorIdentity`); tests inject
+   * their own.
+   */
+  resolveOperator?: () => OperatorIdentity;
+}
+
+/**
+ * The implicit actor for a header-less request in `local_trusted` mode.
+ *
+ * A browser or CLI request with no credentials is the operator: the dedicated
+ * operator user on a current instance, or the legacy sentinel-as-operator on an
+ * instance that predates dedicated operators (`getOperatorIdentity`).
+ *
+ * A header-less request that carries `X-Paperclip-Run-Id` comes from an agent
+ * run's subprocess, which in local mode reaches the API without its own
+ * credentials. Those writes stay under the agent sentinel so comment
+ * attribution keeps deriving the agent from the run, and so a dedicated
+ * operator — a genuine human profile — is never credited with agent output.
+ * The actor keeps the same board-typed, local-implicit authorization shape
+ * either way; only the user identity differs.
+ */
+function localImplicitActor(operator: OperatorIdentity, runId: string | undefined): Request["actor"] {
+  if (runId) {
+    return {
+      type: "board",
+      userId: AGENT_SENTINEL_USER_ID,
+      userName: AGENT_SENTINEL_USER_NAME,
+      userEmail: null,
+      isInstanceAdmin: true,
+      source: "local_implicit",
+    };
+  }
+  return {
+    type: "board",
+    userId: operator.userId ?? AGENT_SENTINEL_USER_ID,
+    userName: operator.userName ?? AGENT_SENTINEL_USER_NAME,
+    userEmail: operator.userEmail ?? null,
+    isInstanceAdmin: true,
+    source: "local_implicit",
+  };
 }
 
 const publicMcpGatewayProtocolPath = /^\/mcp\/gateways\/gw_[a-f0-9]{32}\/?$/i;
@@ -217,19 +269,11 @@ const publicMcpGatewayProtocolPath = /^\/mcp\/gateways\/gw_[a-f0-9]{32}\/?$/i;
 export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHandler {
   const boardAuth = boardAuthService(db);
   return async (req, _res, next) => {
+    const runIdHeader = req.header("x-paperclip-run-id");
     req.actor =
       opts.deploymentMode === "local_trusted"
-        ? {
-            type: "board",
-            userId: "local-board",
-            userName: "Local Board",
-            userEmail: null,
-            isInstanceAdmin: true,
-            source: "local_implicit",
-          }
+        ? localImplicitActor((opts.resolveOperator ?? getOperatorIdentity)(), runIdHeader?.trim() || undefined)
         : { type: "none", source: "none" };
-
-    const runIdHeader = req.header("x-paperclip-run-id");
 
     const authHeader = req.header("authorization");
     const hasBearerCredentials = /^bearer(?:\s|$)/i.test(authHeader ?? "");

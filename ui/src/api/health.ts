@@ -32,6 +32,12 @@ export type HealthStatus = {
   authReady?: boolean;
   bootstrapStatus?: "ready" | "bootstrap_pending";
   bootstrapInviteActive?: boolean;
+  /**
+   * How the instance identifies its operator. `legacy` means the agent
+   * sentinel (`local-board`) still doubles as the operator and the instance
+   * has not been migrated to a dedicated operator user.
+   */
+  operatorIdentity?: "dedicated" | "legacy" | "none";
   features?: {
     companyDeletionEnabled?: boolean;
   };

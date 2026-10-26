@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { authUsers, userApprovalDecisionPolicies, type Db } from "@paperclipai/db";
 import type { ApprovalDecisionPolicy, UpdateApprovalDecisionPolicy } from "@paperclipai/shared";
-import { LOCAL_BOARD_SENTINEL_USER_ID } from "@paperclipai/shared";
+import { AGENT_SENTINEL_USER_ID } from "@paperclipai/shared";
 import { forbidden } from "../errors.js";
 import {
   findHumanManagerMembership,
@@ -37,7 +37,7 @@ export async function assertApprovalDecisionAllowed(
   // An approval still addressed to the agent sentinel belongs to the real
   // Board: name its members (or the recorded operator), never "the Board owner".
   const addresseeName =
-    approval.addresseeUserId === LOCAL_BOARD_SENTINEL_USER_ID
+    approval.addresseeUserId === AGENT_SENTINEL_USER_ID
       ? await describeBoardAddressee(db)
       : addressee?.name?.trim()
         || addressee?.email?.trim()

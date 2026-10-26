@@ -15,7 +15,7 @@ import {
   userSecretDeclarations,
 } from "@paperclipai/db";
 import type { PermissionKey, PrincipalType } from "@paperclipai/shared";
-import { LOCAL_BOARD_SENTINEL_USER_ID } from "@paperclipai/shared";
+import { AGENT_SENTINEL_USER_ID } from "@paperclipai/shared";
 import { conflict } from "../errors.js";
 import { assertAssignableAgent } from "./agent-assignability.js";
 import { authorizationService, type AuthorizationActor, type AuthorizationResource } from "./authorization.js";
@@ -770,9 +770,9 @@ export function accessService(db: Db) {
         .from(instanceUserRoles)
         .where(eq(instanceUserRoles.role, "instance_admin"));
       if (!admins.some((row) => row.userId === userId)) return null;
-      if (userId !== LOCAL_BOARD_SENTINEL_USER_ID) {
+      if (userId !== AGENT_SENTINEL_USER_ID) {
         const remainingMembers = admins.filter(
-          (row) => row.userId !== userId && row.userId !== LOCAL_BOARD_SENTINEL_USER_ID,
+          (row) => row.userId !== userId && row.userId !== AGENT_SENTINEL_USER_ID,
         );
         if (remainingMembers.length === 0) {
           throw conflict(

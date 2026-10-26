@@ -5,7 +5,6 @@ import { z } from "zod";
  * implicit board principal; it is never a Board member in its own right
  * (see doc/plans/2026-10-26-operator-identity-and-board-ownership.md, Spec 6).
  */
-export const LOCAL_BOARD_SENTINEL_USER_ID = "local-board";
 
 /**
  * Key under `instance_settings.general` holding the persisted legacy

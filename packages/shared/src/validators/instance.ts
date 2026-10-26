@@ -32,10 +32,15 @@ export const instanceGeneralSettingsSchema = z.object({
   // Execution policy. Absent/"any" = unrestricted; "kubernetes" forces the
   // Kubernetes sandbox provider and denies local/ssh execution (cloud_tenant).
   executionMode: z.enum(["kubernetes", "any"]).optional(),
+  // Server-managed: the dedicated operator user recorded at first local start
+  // (see `doc/DEPLOYMENT-MODES.md` section 6). Stored beside the user-facing
+  // general settings so one row carries it, but never part of the general
+  // settings API view and never patchable through it.
+  operatorUserId: z.string().min(1).optional(),
 }).strict();
 
 export const patchInstanceGeneralSettingsSchema = z
-  .object(shapeWithoutDefaults(instanceGeneralSettingsSchema.shape))
+  .object(shapeWithoutDefaults(instanceGeneralSettingsSchema.omit({ operatorUserId: true }).shape))
   .partial()
   .strict();
 

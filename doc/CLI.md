@@ -337,6 +337,38 @@ Rules:
 - Nothing is decided, approved, resolved, or completed. The source user row, its `instance_admin` role, and `authAccounts` are never touched.
 - Per-company `activity_log` rows with action `identity.reconciled` are written on apply (actor: the target). The full report is printed and saved as `<instance data dir>/reconcile-identity-<timestamp>.json`; `--json` prints it as JSON instead.
 
+### Enable login without losing the operator
+
+An instance that started in `local_trusted` mode has a dedicated operator user
+(`doc/DEPLOYMENT-MODES.md` section 6). Enabling login attaches a password to
+that same account, so no browser claim is needed and every company, task, and
+provider default stays with it:
+
+```sh
+npx paperclipai configure --section server
+```
+
+When the mode moves from `local_trusted` to `authenticated`, `configure`
+prompts for the operator's email and password (confirmed) before saving the
+config. The headless form, usable at any time on the host while the database
+is reachable (embedded PostgreSQL must be running):
+
+```sh
+npx paperclipai auth set-operator-credentials --email you@example.com
+echo "$PASSWORD" | npx paperclipai auth set-operator-credentials --email you@example.com --password-stdin
+```
+
+Options: `--email <email>` (must be unique on the instance), `--name <name>`
+(sets the display name while it is still the default `Operator`),
+`--password-stdin`, `--db-url <url>`, `-c, --config <path>`,
+`-d, --data-dir <path>`. Re-running replaces the password on the same account.
+
+Legacy instances, where `local-board` still holds `instance_admin` and no
+operator is recorded, are refused: the command prints the two migration paths
+(`auth reconcile-identity` into a real account, or the board-claim URL) and
+never attaches a login to the agent sentinel. `GET /api/health` reports which
+case applies as `operatorIdentity: dedicated | legacy | none`.
+
 Allow an authenticated/private hostname (for example custom Tailscale DNS):
 
 ```sh

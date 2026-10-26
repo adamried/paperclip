@@ -645,6 +645,17 @@ export async function onboard(opts: OnboardOptions): Promise<void> {
 
     p.log.step(pc.bold("Server"));
     ({ server, auth } = await promptServer({ currentServer: server, currentAuth: auth }));
+    if (server.deploymentMode === "authenticated") {
+      // A fresh install has no operator yet (the first admin comes from the
+      // browser setup screen or `auth bootstrap-ceo`). An instance that already
+      // ran in local_trusted mode keeps its operator: once the server is up,
+      // `auth set-operator-credentials` attaches a login to that account.
+      p.log.message(
+        pc.dim(
+          `Login will be required. If this database already ran in local_trusted mode, keep its operator account with ${pc.cyan("paperclipai auth set-operator-credentials --email <email>")} once the server is running.`,
+        ),
+      );
+    }
 
     p.log.step(pc.bold("Storage"));
     storage = await promptStorage(storage);

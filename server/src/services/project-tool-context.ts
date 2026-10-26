@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { issues, type Db } from "@paperclipai/db";
 import { forbidden } from "../errors.js";
 import { captureRunIdentity } from "./run-identity.js";
+import { isLocalTrustedOperator } from "../operator-identity.js";
 
 /** Resolve authority from the authenticated run, never caller-supplied user/task IDs. */
 export async function projectToolContext(db: Db, actor: Request["actor"], write = false) {
@@ -23,6 +24,8 @@ export async function projectToolContext(db: Db, actor: Request["actor"], write 
   }
   if (write && !["standard", "skill_test"].includes(issue.workMode)) throw forbidden("Project creation is unavailable in Ask or Plan mode");
   const userId = identity.run.responsibleUserId;
-  // local-board is a server-owned identity; never accepted from tool arguments.
-  return { run, issue, userId, localTrusted: userId === "local-board" };
+  // The run's responsible user is server-owned; never accepted from tool
+  // arguments. "Local trusted" is keyed on the deployment mode and the resolved
+  // operator id, not on the agent sentinel.
+  return { run, issue, userId, localTrusted: isLocalTrustedOperator(userId) };
 }

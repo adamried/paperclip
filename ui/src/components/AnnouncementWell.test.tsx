@@ -34,14 +34,16 @@ describe("announcement placement gates", () => {
     container = document.createElement("div"); document.body.append(container); root = createRoot(container);
   });
   afterEach(async () => { await act(async () => root.unmount()); container.remove(); });
-  it("waits for identity, company and onboarding, and uses local-board in no-login mode", async () => {
+  it("waits for identity, company and onboarding, and keys no-login mode on the operator account", async () => {
     state.settled = false; await render(); expect(visible()).toBe(false);
     state.settled = true; state.loading = true; await render(); expect(visible()).toBe(false);
     state.loading = false; state.onboardingOpen = true; await render(); expect(visible()).toBe(false);
     state.onboardingOpen = false; await render(); expect(visible()).toBe(true);
     state.userId = null; await render(); expect(visible()).toBe(false);
-    health = { deploymentMode: "local_trusted" } as HealthStatus; await render(); expect(visible()).toBe(true);
-    expect(state.hook).toHaveBeenLastCalledWith(expect.objectContaining({ userId: "local-board", enabled: true }));
+    // local_trusted has no login, but the session still names the operator user.
+    health = { deploymentMode: "local_trusted" } as HealthStatus; await render(); expect(visible()).toBe(false);
+    state.userId = "operator-user"; await render(); expect(visible()).toBe(true);
+    expect(state.hook).toHaveBeenLastCalledWith(expect.objectContaining({ userId: "operator-user", enabled: true }));
   });
   it("yields to toasts and modal/command dialogs without dismissing", async () => {
     await render(); expect(visible()).toBe(true);

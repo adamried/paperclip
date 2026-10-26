@@ -1,4 +1,6 @@
 import { and, desc, eq, gte, ilike, inArray, lt, or, sql, type SQL } from "drizzle-orm";
+import { AGENT_SENTINEL_USER_ID } from "@paperclipai/shared";
+import { AGENT_SENTINEL_USER_NAME } from "../operator-identity.js";
 import type { Db } from "@paperclipai/db";
 import {
   activityLog,
@@ -62,7 +64,7 @@ type ListConnectionLifecycleEventsInput = {
 };
 
 function userFallbackName(userId: string): string {
-  if (userId === "local-board") return "Board";
+  if (userId === AGENT_SENTINEL_USER_ID) return AGENT_SENTINEL_USER_NAME;
   return userId;
 }
 

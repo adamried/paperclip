@@ -35,6 +35,21 @@ export function assertBoard(req: Request) {
   }
 }
 
+/**
+ * The signed-in human behind a board request. Every board actor source
+ * (implicit local operator, session, board key, cloud tenant) carries a user
+ * id, so a missing one is a bug in actor resolution: fail closed with 401
+ * rather than act as any placeholder identity.
+ */
+export function requireActorUserId(req: Request): string {
+  assertBoard(req);
+  const userId = req.actor.userId?.trim();
+  if (!userId) {
+    throw unauthorized("Board user identity required");
+  }
+  return userId;
+}
+
 export function hasBoardOrgAccess(req: Request) {
   if (req.actor.type !== "board") {
     return false;

@@ -25,6 +25,7 @@ import {
   resolvePaperclipInstanceId,
 } from "../config/home.js";
 import { printPaperclipCliBanner } from "../utils/banner.js";
+import { offerOperatorCredentialUpgrade } from "./operator-credentials.js";
 
 type Section = "llm" | "database" | "logging" | "server" | "storage" | "secrets";
 
@@ -181,12 +182,20 @@ export async function configure(opts: {
         break;
       case "server":
         {
+          const previousDeploymentMode = config.server.deploymentMode;
           const { server, auth } = await promptServer({
             currentServer: config.server,
             currentAuth: config.auth,
           });
           config.server = server;
           config.auth = auth;
+          // Upgrade in place (doc/DEPLOYMENT-MODES.md section 8): enabling
+          // login keeps the operator. Attach credentials to the existing
+          // operator user now so no browser claim is needed on next start.
+          // Bind is untouched; this only affects who can sign in.
+          if (previousDeploymentMode === "local_trusted" && server.deploymentMode === "authenticated") {
+            await offerOperatorCredentialUpgrade({ configPath, database: config.database });
+          }
         }
         break;
       case "storage":

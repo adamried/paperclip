@@ -228,6 +228,7 @@ import {
   assertCompanyAccess,
   getAccessibleResource,
   getActorInfo,
+  requireActorUserId,
 } from "./authz.js";
 import {
   assertNoAgentHostWorkspaceCommandMutation,
@@ -17053,7 +17054,7 @@ export function issueRoutes(
 
     const votes = await feedback.listIssueVotesForUser(
       id,
-      req.actor.userId ?? "local-board",
+      requireActorUserId(req),
     );
     res.json(votes);
   });
@@ -18262,7 +18263,7 @@ export function issueRoutes(
         targetId: req.body.targetId,
         vote: req.body.vote,
         reason: req.body.reason,
-        authorUserId: req.actor.userId ?? "local-board",
+        authorUserId: requireActorUserId(req),
         allowSharing: req.body.allowSharing === true,
       });
 

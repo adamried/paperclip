@@ -5,7 +5,7 @@ import { createDb, instanceSettings, instanceUserRoles } from "@paperclipai/db";
 import {
   BOARD_CLAIM_CHALLENGE_SETTINGS_KEY,
   BOARD_CLAIM_CHALLENGE_TTL_MS,
-  LOCAL_BOARD_SENTINEL_USER_ID,
+  AGENT_SENTINEL_USER_ID,
 } from "@paperclipai/shared";
 import {
   buildBoardClaimUrl,
@@ -64,7 +64,7 @@ export async function boardClaimUrl(opts: {
       .select({ userId: instanceUserRoles.userId })
       .from(instanceUserRoles)
       .where(eq(instanceUserRoles.role, "instance_admin"));
-    const onlyLocalBoardAdmin = admins.length === 1 && admins[0]?.userId === LOCAL_BOARD_SENTINEL_USER_ID;
+    const onlyLocalBoardAdmin = admins.length === 1 && admins[0]?.userId === AGENT_SENTINEL_USER_ID;
     if (!onlyLocalBoardAdmin) {
       if (admins.length === 0) {
         p.log.info(

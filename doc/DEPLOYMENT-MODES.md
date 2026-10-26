@@ -121,21 +121,112 @@ pnpm paperclipai doctor
 
 Doctor reads configured mode/exposure and applies mode-aware checks. Optional override flags are secondary.
 
-## 6. Board/User Integration Contract
+## 6. Operator Identity and Board/User Integration Contract
 
-Board identity must be represented by a real DB user principal for user-based features to work consistently.
+Paperclip identifies the instance's human operator with one user id for the
+life of the instance. That id is the implicit actor in `local_trusted` mode
+and, once login is enabled, the account that keeps every company, task,
+approval, and provider default (section 8). Enabling login never creates a
+second human.
 
-Required integration points:
+### 6.1 The operator user
 
-- real user row in `authUsers` for Board identity
-- `instance_user_roles` entry for Board admin authority
+On the first `local_trusted` start of an instance with no recorded operator,
+startup (`ensureOperatorIdentity` in `server/src/operator-identity.ts`) creates
+one `authUsers` row:
+
+- random id
+- name `Operator`
+- email `operator@<instanceId>.paperclip.local` (unique, not routable)
+- `emailVerified: false`
+
+It grants that row `instance_admin` and an active `owner` membership in every
+company, and records the id in `instance_settings.general.operatorUserId`.
+Later starts only re-assert those grants (for example owner membership in a
+company created since). The record is server-managed metadata, not a setting:
+`GET /api/instance/settings/general` strips it and the general-settings patch
+schema rejects it, while general-settings writes preserve it.
+
+Header-less requests in `local_trusted` mode act as the operator
+(`req.actor.source = "local_implicit"`, `userId` = the operator id,
+`isInstanceAdmin: true`). `/api/auth/get-session` reports the same user, so
+"me", user assignment, approvals addressed to the operator, and per-user
+provider defaults all key on one id.
+
+### 6.2 The agent sentinel `local-board`
+
+`local-board` (`AGENT_SENTINEL_USER_ID` in `@paperclipai/shared`) is the
+non-human sentinel that agent-authored rows are written under. It is a real
+`authUsers` row only so those foreign keys resolve. On new instances it holds
+no `instance_admin` role and no company membership, and display paths render
+it as "Agent runtime". It is never a seat on the Board and never the operator.
+
+In `local_trusted` mode a header-less request that carries
+`X-Paperclip-Run-Id` comes from an agent run's subprocess, which reaches the
+API without credentials of its own. It is attributed to the sentinel, not the
+operator, so comment attribution keeps deriving the agent from the run
+(`NON_HUMAN_SENTINEL_AUTHOR_USER_IDS` in `server/src/services/issues.ts`) and
+a human operator is never credited with agent output. Authorization is the
+same local-implicit board shape either way; only the user identity differs.
+
+Code never falls back to `"local-board"` for a board-typed actor whose
+`userId` is missing. Board routes use `requireActorUserId` and fail closed
+with 401.
+
+### 6.3 Legacy instances
+
+An instance created before dedicated operators existed has `local-board`
+holding `instance_admin` and nothing recorded in
+`instance_settings.general.operatorUserId`. Such an instance is **legacy**:
+
+- startup never migrates it: zero rows change on boot
+- the sentinel doubles as the operator in memory only, so every request
+  resolves exactly as it did before
+- startup logs one warning naming this document
+- `/api/health` reports `operatorIdentity: "legacy"`
+
+Migration is an explicit host action, never a side effect of upgrading:
+
+1. `paperclipai auth reconcile-identity --from local-board --to <email> --apply`
+   moves operational ownership into a real account and records it as the
+   operator (reconciliation spec), or
+2. the browser claim flow in section 7.
+
+`paperclipai auth set-operator-credentials` refuses a legacy instance and
+prints these two paths; it never attaches a password to the sentinel.
+
+### 6.4 `operatorIdentity` in `/api/health`
+
+| Value | Meaning |
+|---|---|
+| `dedicated` | A dedicated operator user is recorded. Fresh `local_trusted` installs and instances upgraded in place report this. |
+| `legacy` | Nothing is recorded and `local-board` still holds `instance_admin` (section 6.3). |
+| `none` | Nothing is recorded and the sentinel is not an admin, for example a fresh `authenticated` install whose first admin is a real signup. |
+
+The field rides every response shape that carries `bootstrapStatus`.
+
+### 6.5 Required integration points
+
+Operator identity must be represented by a real DB user principal for
+user-based features to work consistently:
+
+- real user row in `authUsers` for the operator
+- `instance_user_roles` entry for instance admin authority
 - `company_memberships` integration for user-level task assignment and access
 
-This is required because user assignment paths validate active membership for `assigneeUserId`.
+This is required because user assignment paths validate active membership for
+`assigneeUserId`.
 
-## 7. Local Trusted -> Authenticated Claim Flow
+## 7. Local Trusted -> Authenticated Claim Flow (Legacy Instances)
 
-When running `authenticated` mode, if the only instance admin is `local-board`, Paperclip issues a one-time high-entropy claim challenge and prints its URL in the startup warning.
+This flow applies to legacy instances (section 6.3). An instance with a
+dedicated operator never needs it: the operator already holds
+`instance_admin`, so `bootstrapStatus` is `ready` and no claim URL is issued
+(section 8.1).
+
+When running `authenticated` mode, if the only instance admin is
+`local-board`, Paperclip emits a startup warning with a one-time high-entropy
+claim URL.
 
 - URL format: `/board-claim/<token>?code=<code>`
 - intended use: signed-in human claims board ownership
@@ -160,7 +251,10 @@ Discoverability:
 
 The Board is the set of users holding `instance_admin`, excluding the `local-board` agent sentinel. `GET /api/admin/board` lists it, the Instance Access page manages it (add via user search and promote, remove via demote; removing the last member is refused with `409`), and the org chart lists its members directly under "The Board". `local-board` is never offered as a Board member.
 
-This prevents lockout when a user migrates from long-running local trusted usage to authenticated mode.
+This prevents lockout when a user migrates from long-running local trusted
+usage to authenticated mode. The claim moves roles and memberships only;
+operational references (assignments, pending approvals, provider defaults)
+are moved by `paperclipai auth reconcile-identity`.
 
 The claim moves roles and memberships only. Operational references created in
 local mode (issues assigned to `local-board`, pending approvals addressed to
@@ -212,6 +306,49 @@ For `authenticated/public`, browser first-admin claim is intentionally disabled.
 Public deployments must use the high-entropy bootstrap invite path unless a
 future public-hosted setup design explicitly changes this policy.
 
+### 8.1 Upgrade In Place: Enabling Login Keeps The Operator
+
+An instance that started in `local_trusted` mode with a dedicated operator
+(section 6.1) does not go through either bootstrap path when login is enabled.
+The operator gains a password instead:
+
+1. `paperclipai configure --section server` and choose an authenticated
+   reachability (`Private network`, `Tailnet`, or `Custom` with
+   `authenticated`). When the mode moves from `local_trusted` to
+   `authenticated`, the CLI prompts for the operator's email and password
+   (confirmed). The email must be unique among `authUsers`.
+2. The operator's `authUsers` row gets the email (`emailVerified` stays
+   `false`; there is no mail transport) and one `authAccounts` row with
+   Better Auth's credential provider: `providerId: "credential"`,
+   `issuer: "local:credential"`, `accountId` = the operator's user id, and a
+   password hashed with Better Auth's own exported hasher
+   (`hashPassword` from `better-auth/crypto`). The normal
+   `/api/auth/sign-in/email` endpoint accepts it and the session's `userId`
+   is the pre-upgrade operator id.
+3. The config is saved regardless of the prompt's outcome. On next start the
+   operator already holds `instance_admin`, so `bootstrapStatus` is `ready`,
+   no claim URL is logged, and `/api/health` reports
+   `operatorIdentity: "dedicated"`.
+
+Headless alternative (also usable before switching the mode, or after
+skipping the prompt):
+
+```sh
+paperclipai auth set-operator-credentials --email <email>                  # password prompted
+echo "$PASSWORD" | paperclipai auth set-operator-credentials --email <email> --password-stdin
+```
+
+Both forms run on the host with database access (an embedded PostgreSQL
+cluster must be running). A duplicate email is rejected; the password follows
+Better Auth's bounds (8 to 128 characters). Re-running replaces the password
+on the same account rather than adding a second human.
+
+Bind is untouched. Enabling login does not change the listening address; LAN
+or Tailscale reachability remains the separate bind prompt.
+
+On a legacy instance (section 6.3) the prompt and the command refuse to attach
+credentials to `local-board` and print the two migration paths instead.
+
 ## 9. Account Profile, Email, and Password Reset
 
 An account is one `authUsers` row for the life of the instance. Changing its
@@ -254,11 +391,19 @@ but cannot reset the password. Keep at least one working credential for an
 instance admin, and treat a verified-email account's inability to change its
 own email until mail exists as expected behaviour.
 
-## 10. Current Code Reality (As Of 2026-02-23)
+## 10. Current Code Reality (As Of 2026-10-26)
 
 - runtime values are `local_trusted | authenticated`
 - `authenticated` uses Better Auth sessions and bootstrap invite flow
-- `local_trusted` ensures a real local Board user principal in `authUsers` with `instance_user_roles` admin access
+- `local_trusted` resolves the operator identity at startup
+  (`server/src/operator-identity.ts`): a fresh instance gets a dedicated
+  operator user with `instance_user_roles` admin access and owner
+  memberships; a legacy instance is classified, logged, and left untouched
+- `local-board` is created as a grant-free agent sentinel on new instances
+- `/api/health` reports `operatorIdentity: dedicated | legacy | none`
+- `paperclipai configure --section server` offers the operator credential
+  upgrade when the mode moves to `authenticated`;
+  `paperclipai auth set-operator-credentials` is the headless form
 - company creation ensures creator membership in `company_memberships` so user assignment/access flows remain consistent
 
 ## 11. Naming and Compatibility Policy

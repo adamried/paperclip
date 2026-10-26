@@ -4,7 +4,7 @@ import { companies, companyMemberships, instanceSettings, instanceUserRoles } fr
 import type { DeploymentMode } from "@paperclipai/shared";
 import {
   BOARD_CLAIM_CHALLENGE_SETTINGS_KEY,
-  LOCAL_BOARD_SENTINEL_USER_ID,
+  AGENT_SENTINEL_USER_ID,
   readBoardClaimChallengeRecord,
   type BoardClaimChallengeRecord,
 } from "@paperclipai/shared";
@@ -88,7 +88,7 @@ export async function isLegacyLocalBoardOnlyAdmin(runner: BoardClaimReadRunner):
     .select({ userId: instanceUserRoles.userId })
     .from(instanceUserRoles)
     .where(eq(instanceUserRoles.role, "instance_admin"));
-  return admins.length === 1 && admins[0]?.userId === LOCAL_BOARD_SENTINEL_USER_ID;
+  return admins.length === 1 && admins[0]?.userId === AGENT_SENTINEL_USER_ID;
 }
 
 /**
@@ -221,7 +221,7 @@ export async function claimBoardOwnership(
     await tx
       .delete(instanceUserRoles)
       .where(
-        and(eq(instanceUserRoles.userId, LOCAL_BOARD_SENTINEL_USER_ID), eq(instanceUserRoles.role, "instance_admin")),
+        and(eq(instanceUserRoles.userId, AGENT_SENTINEL_USER_ID), eq(instanceUserRoles.role, "instance_admin")),
       );
 
     const claimedCompanyIds: string[] = [];

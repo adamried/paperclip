@@ -10,6 +10,7 @@ import {
   heartbeatRuns,
 } from "@paperclipai/db";
 import { actorMiddleware } from "../middleware/auth.js";
+import type { OperatorIdentity } from "../operator-identity.js";
 import { errorHandler } from "../middleware/error-handler.js";
 import { createLocalAgentJwt } from "../agent-auth-jwt.js";
 import { assertCompanyAccess } from "../routes/authz.js";
@@ -90,13 +91,26 @@ function createDbState(input: {
   return { db, activity };
 }
 
-function createApp(db: any, deploymentMode: "authenticated" | "local_trusted" = "authenticated") {
+const dedicatedOperator: OperatorIdentity = {
+  kind: "dedicated",
+  userId: "operator-user-id",
+  userName: "Operator",
+  userEmail: "operator@test.paperclip.local",
+  deploymentMode: "local_trusted",
+};
+
+function createApp(
+  db: any,
+  deploymentMode: "authenticated" | "local_trusted" = "authenticated",
+  resolveOperator?: () => OperatorIdentity,
+) {
   const app = express();
   app.use(express.json());
   app.use(
     actorMiddleware(db, {
       deploymentMode,
       resolveSession: async () => null,
+      resolveOperator,
     }),
   );
   app.get("/actor", (req, res) => {
@@ -175,16 +189,43 @@ describe("agent auth middleware", () => {
     else process.env.PAPERCLIP_INSTANCE_ID = originalInstanceId;
   });
 
-  it("keeps header-less local requests as the implicit board actor with their run id", async () => {
+  it("keeps header-less local requests with a run id under the agent sentinel", async () => {
     const runId = randomUUID();
     const { db } = createDbState({ agent: { id: randomUUID(), companyId: randomUUID() } });
 
-    const res = await request(createApp(db, "local_trusted"))
+    const res = await request(createApp(db, "local_trusted", () => dedicatedOperator))
       .get("/actor")
       .set("X-Paperclip-Run-Id", runId);
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ type: "board", userId: "local-board", runId });
+    // An agent run's subprocess has no credentials of its own in local mode;
+    // its writes stay attributable to the run, never to the operator.
+    expect(res.body).toMatchObject({ type: "board", source: "local_implicit", userId: "local-board", runId });
+  });
+
+  it("resolves header-less local requests without a run id to the operator", async () => {
+    const { db } = createDbState({ agent: { id: randomUUID(), companyId: randomUUID() } });
+
+    const res = await request(createApp(db, "local_trusted", () => dedicatedOperator)).get("/actor");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      type: "board",
+      source: "local_implicit",
+      userId: "operator-user-id",
+      userName: "Operator",
+      userEmail: "operator@test.paperclip.local",
+      isInstanceAdmin: true,
+    });
+  });
+
+  it("falls back to the legacy sentinel-as-operator identity when nothing has been resolved", async () => {
+    const { db } = createDbState({ agent: { id: randomUUID(), companyId: randomUUID() } });
+
+    const res = await request(createApp(db, "local_trusted")).get("/actor");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ type: "board", source: "local_implicit", userId: "local-board" });
   });
 
   it.each([

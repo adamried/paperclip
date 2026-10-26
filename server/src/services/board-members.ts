@@ -2,7 +2,7 @@ import { eq, inArray } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { authUsers, instanceSettings, instanceUserRoles } from "@paperclipai/db";
 import {
-  LOCAL_BOARD_SENTINEL_USER_ID,
+  AGENT_SENTINEL_USER_ID,
   type BoardMember,
   type BoardMembersResponse,
 } from "@paperclipai/shared";
@@ -50,8 +50,8 @@ export async function listBoardMembers(db: BoardMembersRunner): Promise<BoardMem
     readRecordedOperatorUserId(db),
   ]);
 
-  const legacySentinelHoldsAdmin = roles.some((role) => role.userId === LOCAL_BOARD_SENTINEL_USER_ID);
-  const memberRoles = roles.filter((role) => role.userId !== LOCAL_BOARD_SENTINEL_USER_ID);
+  const legacySentinelHoldsAdmin = roles.some((role) => role.userId === AGENT_SENTINEL_USER_ID);
+  const memberRoles = roles.filter((role) => role.userId !== AGENT_SENTINEL_USER_ID);
   const userIds = memberRoles.map((role) => role.userId);
   const users = userIds.length
     ? await db

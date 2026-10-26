@@ -4,7 +4,7 @@ import { Router } from "express";
 import type { Db } from "@paperclipai/db";
 import { and, count, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import { heartbeatRuns, instanceUserRoles, invites } from "@paperclipai/db";
-import type { DeploymentExposure, DeploymentMode } from "@paperclipai/shared";
+import type { DeploymentExposure, DeploymentMode, OperatorIdentityKind } from "@paperclipai/shared";
 import {
   readPersistedDevServerStatus,
   removeDevServerRestartRequest,
@@ -36,6 +36,7 @@ import {
 } from "../auth/workspace-login-handoff.js";
 import { serverVersion } from "../version.js";
 import { getStartupRecoveryState } from "../startup-recovery-state.js";
+import { getOperatorIdentity } from "../operator-identity.js";
 import { nativeRestartRecoverySummary } from "../services/native-runtime/native-restart-recovery.js";
 import {
   removeHotRestartIntent,
@@ -127,6 +128,8 @@ export function healthRoutes(
     serverInfo?: ServerInfoSnapshot;
     databaseBackupHealth?: InspectDatabaseBackupHealthOptions;
     runtimeEnv?: CloudInstanceEnv;
+    /** Defaults to the identity startup resolved; tests inject their own. */
+    operatorIdentity?: () => OperatorIdentityKind;
   } = {
     deploymentMode: "local_trusted",
     deploymentExposure: "private",
@@ -318,6 +321,12 @@ export function healthRoutes(
 
     let bootstrapStatus: "ready" | "bootstrap_pending" = "ready";
     let bootstrapInviteActive = false;
+    // How the instance identifies its operator (doc/DEPLOYMENT-MODES.md
+    // section 6). `legacy` means the agent sentinel still doubles as the
+    // operator and startup left the instance unmigrated. It is a
+    // classification, not identity material, so it rides every response shape
+    // that carries bootstrapStatus.
+    const operatorIdentity = (opts.operatorIdentity ?? (() => getOperatorIdentity().kind))();
     // Cloud-managed instances have no first-admin concept: the control
     // plane owns identity and its trusted-header users are deliberately
     // never instance_admin, so the role-count gate below would report
@@ -396,6 +405,7 @@ export function healthRoutes(
         commit,
         bootstrapStatus,
         bootstrapInviteActive,
+        operatorIdentity,
         ...(redactedDatabaseBackup ? { databaseBackup: redactedDatabaseBackup } : {}),
         ...(redactedWarnings ? { warnings: redactedWarnings } : {}),
         ...(devServer ? { devServer } : {}),
@@ -420,6 +430,7 @@ export function healthRoutes(
       authReady: opts.authReady,
       bootstrapStatus,
       bootstrapInviteActive,
+      operatorIdentity,
       features: {
         companyDeletionEnabled: opts.companyDeletionEnabled,
       },

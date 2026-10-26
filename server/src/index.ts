@@ -35,13 +35,12 @@ import {
   reconcilePendingMigrationHistory,
   formatDatabaseBackupResult,
   runDatabaseBackup,
-  authUsers,
   companies,
-  companyMemberships,
-  instanceUserRoles,
 } from "@paperclipai/db";
 import detectPort from "detect-port";
 import { createApp } from "./app.js";
+import { ensureOperatorIdentity } from "./operator-identity.js";
+import { resolvePaperclipInstanceId } from "./home-paths.js";
 import { loadConfig } from "./config.js";
 import { logger } from "./middleware/logger.js";
 import { setStartupRecoveryPhase } from "./startup-recovery-state.js";
@@ -348,66 +347,6 @@ async function startServerWithDatabaseTeardown(
     }
   }
 
-  const LOCAL_BOARD_USER_ID = "local-board";
-  const LOCAL_BOARD_USER_EMAIL = "local@paperclip.local";
-  const LOCAL_BOARD_USER_NAME = "Board";
-  
-  async function ensureLocalTrustedBoardPrincipal(db: any): Promise<void> {
-    const now = new Date();
-    const existingUser = await db
-      .select({ id: authUsers.id })
-      .from(authUsers)
-      .where(eq(authUsers.id, LOCAL_BOARD_USER_ID))
-      .then((rows: Array<{ id: string }>) => rows[0] ?? null);
-  
-    if (!existingUser) {
-      await db.insert(authUsers).values({
-        id: LOCAL_BOARD_USER_ID,
-        name: LOCAL_BOARD_USER_NAME,
-        email: LOCAL_BOARD_USER_EMAIL,
-        emailVerified: true,
-        image: null,
-        createdAt: now,
-        updatedAt: now,
-      });
-    }
-  
-    const role = await db
-      .select({ id: instanceUserRoles.id })
-      .from(instanceUserRoles)
-      .where(and(eq(instanceUserRoles.userId, LOCAL_BOARD_USER_ID), eq(instanceUserRoles.role, "instance_admin")))
-      .then((rows: Array<{ id: string }>) => rows[0] ?? null);
-    if (!role) {
-      await db.insert(instanceUserRoles).values({
-        userId: LOCAL_BOARD_USER_ID,
-        role: "instance_admin",
-      });
-    }
-  
-    const companyRows = await db.select({ id: companies.id }).from(companies);
-    for (const company of companyRows) {
-      const membership = await db
-        .select({ id: companyMemberships.id })
-        .from(companyMemberships)
-        .where(
-          and(
-            eq(companyMemberships.companyId, company.id),
-            eq(companyMemberships.principalType, "user"),
-            eq(companyMemberships.principalId, LOCAL_BOARD_USER_ID),
-          ),
-        )
-        .then((rows: Array<{ id: string }>) => rows[0] ?? null);
-      if (membership) continue;
-      await db.insert(companyMemberships).values({
-        companyId: company.id,
-        principalType: "user",
-        principalId: LOCAL_BOARD_USER_ID,
-        status: "active",
-        membershipRole: "owner",
-      });
-    }
-  }
-  
   let db;
   let pluginMigrationDb;
   let embeddedPostgres: EmbeddedPostgresInstance | null = null;
@@ -694,8 +633,23 @@ async function startServerWithDatabaseTeardown(
   let resolveSessionFromHeaders:
     | ((headers: Headers) => Promise<BetterAuthSessionResult | null>)
     | undefined;
-  if (config.deploymentMode === "local_trusted") {
-    await ensureLocalTrustedBoardPrincipal(db as any);
+  // Operator identity (doc/DEPLOYMENT-MODES.md section 6). In local_trusted
+  // mode this creates the dedicated operator on a fresh instance and otherwise
+  // only re-asserts its grants; a legacy instance (sentinel still admin, nothing
+  // recorded) is classified and left byte-identical. In authenticated mode it
+  // is a read-only classification so health can report it.
+  const operatorIdentity = await ensureOperatorIdentity(db as any, {
+    deploymentMode: config.deploymentMode,
+    instanceId: resolvePaperclipInstanceId(),
+  });
+  if (operatorIdentity.created) {
+    logger.info({ operatorUserId: operatorIdentity.userId }, "Created the dedicated operator user for this instance");
+  } else if (operatorIdentity.kind === "legacy") {
+    logger.warn(
+      { operatorUserId: operatorIdentity.userId },
+      "This instance uses the legacy operator identity: the agent sentinel `local-board` still holds instance_admin and no dedicated operator is recorded. " +
+        "Nothing was migrated. See doc/DEPLOYMENT-MODES.md section 6 for the migration paths; /api/health reports operatorIdentity=legacy.",
+    );
   }
   const accessBackfill = await backfillPrincipalAccessCompatibility(db as any);
   if (accessBackfill.agentMembershipsInserted > 0 || accessBackfill.humanGrantsInserted > 0) {

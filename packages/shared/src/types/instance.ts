@@ -38,6 +38,12 @@ export interface InstanceGeneralSettings {
    * Kubernetes sandbox provider and denies local/ssh execution.
    */
   executionMode?: InstanceExecutionMode;
+  /**
+   * Server-managed: the dedicated operator user id recorded at first
+   * `local_trusted` start. Present on the stored row only; the general
+   * settings API strips it from responses and rejects it in patches.
+   */
+  operatorUserId?: string;
 }
 
 export interface InstanceExperimentalSettings {

@@ -1783,6 +1783,10 @@ registry.registerPath({
           .optional(),
         bootstrapStatus: z.enum(["ready", "bootstrap_pending"]).optional(),
         bootstrapInviteActive: z.boolean().optional(),
+        // How the instance identifies its operator: `dedicated` (a dedicated
+        // operator user is recorded), `legacy` (the agent sentinel still holds
+        // instance_admin; never migrated at startup), or `none`.
+        operatorIdentity: z.enum(["dedicated", "legacy", "none"]).optional(),
         databaseBackup: z
           .object({
             enabled: z.boolean(),

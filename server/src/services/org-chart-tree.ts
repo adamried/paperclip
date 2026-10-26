@@ -1,4 +1,5 @@
-import { LOCAL_BOARD_SENTINEL_USER_ID, type OrgTreeNode } from "@paperclipai/shared";
+import { AGENT_SENTINEL_USER_ID, type OrgTreeNode } from "@paperclipai/shared";
+import { AGENT_SENTINEL_USER_NAME } from "../operator-identity.js";
 
 /**
  * Wraps the agent forest the agent service produces into the org chart the
@@ -51,8 +52,7 @@ function userDisplayName(userId: string, user: OrgChartUserSummary | undefined) 
   if (name) return name;
   const email = user?.email?.trim();
   if (email) return email;
-  // The sentinel is the agent runtime's posting identity, not a Board seat.
-  if (userId === LOCAL_BOARD_SENTINEL_USER_ID) return "Agent runtime";
+  if (userId === AGENT_SENTINEL_USER_ID) return AGENT_SENTINEL_USER_NAME;
   return userId.slice(0, 8);
 }
 
@@ -83,7 +83,7 @@ export function buildOrgChartTree(
     byUser.set(userId, group);
   }
 
-  const memberIds = [...new Set(boardMemberIds)].filter((id) => id !== LOCAL_BOARD_SENTINEL_USER_ID);
+  const memberIds = [...new Set(boardMemberIds)].filter((id) => id !== AGENT_SENTINEL_USER_ID);
   const memberNodes: OrgTreeNode[] = memberIds
     .map((userId) => {
       const user = users.get(userId);

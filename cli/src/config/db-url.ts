@@ -1,3 +1,4 @@
+import type { PaperclipConfig } from "./schema.js";
 import { readConfig } from "./store.js";
 
 /**
@@ -10,12 +11,16 @@ import { readConfig } from "./store.js";
 export function resolveDbUrl(configPath?: string, explicitDbUrl?: string): string | null {
   if (explicitDbUrl) return explicitDbUrl;
   const config = readConfig(configPath);
+  return resolveDatabaseUrlFromConfig(config?.database);
+}
+
+export function resolveDatabaseUrlFromConfig(database: PaperclipConfig["database"] | undefined): string | null {
   if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
-  if (config?.database.mode === "postgres" && config.database.connectionString) {
-    return config.database.connectionString;
+  if (database?.mode === "postgres" && database.connectionString) {
+    return database.connectionString;
   }
-  if (config?.database.mode === "embedded-postgres") {
-    const port = config.database.embeddedPostgresPort ?? 54329;
+  if (database?.mode === "embedded-postgres") {
+    const port = database.embeddedPostgresPort ?? 54329;
     return `postgres://paperclip:paperclip@127.0.0.1:${port}/paperclip`;
   }
   return null;

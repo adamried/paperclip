@@ -45,6 +45,7 @@ function createApp(
   serverInfo = testServerInfo,
   databaseBackupHealth?: Parameters<typeof healthRoutes>[1]["databaseBackupHealth"],
   runtimeEnv?: Parameters<typeof healthRoutes>[1]["runtimeEnv"],
+  operatorIdentity?: Parameters<typeof healthRoutes>[1]["operatorIdentity"],
 ) {
   const app = express();
   app.use(
@@ -57,6 +58,7 @@ function createApp(
       serverInfo,
       databaseBackupHealth,
       runtimeEnv,
+      operatorIdentity,
     }),
   );
   return app;
@@ -151,6 +153,19 @@ describe("GET /health", () => {
       version: serverVersion,
       serverInfo: testServerInfo,
     });
+  });
+
+  it("reports how the instance identifies its operator alongside bootstrap status", async () => {
+    const legacy = await request(createApp(createHealthyDb(), testServerInfo, undefined, {}, () => "legacy")).get("/health");
+    expect(legacy.status).toBe(200);
+    expect(legacy.body).toMatchObject({ bootstrapStatus: "ready", operatorIdentity: "legacy" });
+
+    const dedicated = await request(createApp(createHealthyDb(), testServerInfo, undefined, {}, () => "dedicated")).get("/health");
+    expect(dedicated.body.operatorIdentity).toBe("dedicated");
+
+    // Without a database there is no bootstrap status and no operator classification.
+    const noDb = await request(createApp()).get("/health");
+    expect(Object.prototype.hasOwnProperty.call(noDb.body, "operatorIdentity")).toBe(false);
   });
 
   it("returns 503 when the database probe fails", async () => {
@@ -327,6 +342,7 @@ describe("GET /health", () => {
         authReady: true,
         companyDeletionEnabled: false,
         serverInfo: testServerInfo,
+        operatorIdentity: () => "none",
         databaseBackupHealth: {
           enabled: true,
           backupDir,
@@ -347,6 +363,7 @@ describe("GET /health", () => {
       commit: testServerInfo.git.fullSha,
       bootstrapStatus: "ready",
       bootstrapInviteActive: false,
+      operatorIdentity: "none",
       databaseBackup: {
         enabled: true,
         status: "warning",
@@ -391,6 +408,7 @@ describe("GET /health", () => {
         authReady: true,
         companyDeletionEnabled: false,
         serverInfo: testServerInfo,
+        operatorIdentity: () => "none",
       }),
     );
 
@@ -405,6 +423,7 @@ describe("GET /health", () => {
       commit: testServerInfo.git.fullSha,
       bootstrapStatus: "ready",
       bootstrapInviteActive: false,
+      operatorIdentity: "none",
     });
     expect(res.body.serverInfo).toBeUndefined();
   });
@@ -430,6 +449,7 @@ describe("GET /health", () => {
         authReady: true,
         companyDeletionEnabled: false,
         serverInfo: testServerInfo,
+        operatorIdentity: () => "none",
       }),
     );
 
@@ -444,6 +464,7 @@ describe("GET /health", () => {
       commit: testServerInfo.git.fullSha,
       bootstrapStatus: "ready",
       bootstrapInviteActive: false,
+      operatorIdentity: "none",
     });
     expect(res.body.serverInfo).toBeUndefined();
   });
