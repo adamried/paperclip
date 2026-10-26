@@ -35,7 +35,7 @@ import { promptLlm } from "../prompts/llm.js";
 import { promptLogging } from "../prompts/logging.js";
 import { defaultSecretsConfig } from "../prompts/secrets.js";
 import { defaultStorageConfig, promptStorage } from "../prompts/storage.js";
-import { promptServer } from "../prompts/server.js";
+import { LOCAL_ONLY_LOGIN_LATER_COPY, promptServer } from "../prompts/server.js";
 import { buildPresetServerConfig } from "../config/server-bind.js";
 import {
   describeLocalInstancePaths,
@@ -365,6 +365,37 @@ function canCreateBootstrapInviteImmediately(config: Pick<PaperclipConfig, "data
   return config.server.deploymentMode === "authenticated" && config.database.mode !== "embedded-postgres";
 }
 
+/**
+ * What an authenticated instance needs before anyone can sign in. Printed
+ * instead of attaching credentials inline: a fresh install has no running
+ * database yet, so the first admin is created once the server is up. Login
+ * belongs to this instance, not to a hosted subscription
+ * (doc/DEPLOYMENT-MODES.md sections 8 and 8.1).
+ */
+export function authenticatedFirstAdminGuidance(
+  server: Pick<PaperclipConfig["server"], "exposure" | "bind" | "customBindHost" | "host" | "port">,
+): string[] {
+  const lines = [
+    "Login is required. Accounts live in this Paperclip, not in a hosted subscription.",
+    `Listening address is unchanged by that choice: ${describeServerBinding(server)}.`,
+    "",
+    `After ${pc.cyan("paperclipai run")}, create the first admin one of these ways:`,
+  ];
+  if (server.exposure === "private") {
+    lines.push(
+      "  - Open Paperclip in a browser, sign in or create an account, and choose Claim this instance.",
+      "    The signed-in account becomes the first admin.",
+    );
+  }
+  lines.push(
+    `  - Or print a one-time first-admin invite URL: ${pc.cyan("paperclipai auth bootstrap-ceo")}`,
+    "",
+    "Did this database already run without login? Keep its operator account instead of creating a new one:",
+    `  ${pc.cyan("paperclipai auth set-operator-credentials --email <email>")} while the server is running.`,
+  );
+  return lines;
+}
+
 export function isEphemeralNpxExecution(entrypoint = process.argv[1]): boolean {
   if (!entrypoint) return false;
   const normalized = entrypoint.replaceAll("\\", "/");
@@ -650,11 +681,7 @@ export async function onboard(opts: OnboardOptions): Promise<void> {
       // browser setup screen or `auth bootstrap-ceo`). An instance that already
       // ran in local_trusted mode keeps its operator: once the server is up,
       // `auth set-operator-credentials` attaches a login to that account.
-      p.log.message(
-        pc.dim(
-          `Login will be required. If this database already ran in local_trusted mode, keep its operator account with ${pc.cyan("paperclipai auth set-operator-credentials --email <email>")} once the server is running.`,
-        ),
-      );
+      p.note(authenticatedFirstAdminGuidance(server).join("\n"), "First admin");
     }
 
     p.log.step(pc.bold("Storage"));
@@ -692,6 +719,9 @@ export async function onboard(opts: OnboardOptions): Promise<void> {
     }
     for (const ignored of ignoredEnvKeys) {
       p.log.message(pc.dim(`Ignored ${ignored.key}: ${ignored.reason}`));
+    }
+    if (server.deploymentMode === "local_trusted") {
+      p.log.message(pc.dim(`No login on this computer. ${LOCAL_ONLY_LOGIN_LATER_COPY}`));
     }
   }
 
@@ -795,12 +825,14 @@ export async function onboard(opts: OnboardOptions): Promise<void> {
   }
 
   if (server.deploymentMode === "authenticated" && database.mode === "embedded-postgres") {
-    p.log.info(
+    p.note(
       [
-        "Bootstrap CEO invite will be created after the server starts.",
+        "The first admin is created after the server starts.",
         `Next: ${pc.cyan("paperclipai run")}`,
-        `Then: ${pc.cyan("paperclipai auth bootstrap-ceo")}`,
+        "",
+        ...authenticatedFirstAdminGuidance(server),
       ].join("\n"),
+      "Login required",
     );
   }
 

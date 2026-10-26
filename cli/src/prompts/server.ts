@@ -1,55 +1,106 @@
 import * as p from "@clack/prompts";
+import pc from "picocolors";
 import { isLoopbackHost, type BindMode } from "@paperclipai/shared";
 import type { AuthConfig, ServerConfig } from "../config/schema.js";
 import { parseHostnameCsv } from "../config/hostnames.js";
-import { buildCustomServerConfig, buildPresetServerConfig, inferConfiguredBind } from "../config/server-bind.js";
+import {
+  buildCustomServerConfig,
+  buildPresetServerConfig,
+  inferConfiguredBind,
+  type ServerPreset,
+} from "../config/server-bind.js";
 
 const TAILNET_BIND_WARNING =
   "No Tailscale address was detected during setup. The saved config will stay on loopback until Tailscale is available or PAPERCLIP_TAILNET_BIND_HOST is set.";
+
+/**
+ * The first server question asks how Paperclip will be used, not where it
+ * listens (doc/DEPLOYMENT-MODES.md section 4). Login and bind are decided
+ * separately: choosing login never widens the listening address.
+ */
+export type ServerUsageChoice = "local" | "shared" | "unsure" | "advanced";
+
+export type SharedBindChoice = Extract<BindMode, "lan" | "tailnet">;
+
+export const SERVER_USAGE_PROMPT_MESSAGE = "How will you use Paperclip?";
+
+export const LOCAL_ONLY_LOGIN_LATER_COPY =
+  "You can enable login later. Your work stays with your account when you do.";
+
+export const SERVER_USAGE_OPTIONS: ReadonlyArray<{ value: ServerUsageChoice; label: string; hint: string }> = [
+  {
+    value: "local",
+    label: "Only on this computer",
+    hint: `No login, localhost only. ${LOCAL_ONLY_LOGIN_LATER_COPY}`,
+  },
+  {
+    value: "shared",
+    label: "Other devices, teammates, or a remote assistant",
+    hint: "Login required. You choose how it is reached next (private network or Tailscale).",
+  },
+  {
+    value: "unsure",
+    label: "Not sure yet",
+    hint: "Login required, localhost only. Open it up to other devices later without losing anything.",
+  },
+  {
+    value: "advanced",
+    label: "Advanced",
+    hint: "Choose exact auth mode, exposure, and host manually",
+  },
+];
+
+export const SHARED_BIND_PROMPT_MESSAGE = "How will other devices reach it?";
+
+export const SHARED_BIND_OPTIONS: ReadonlyArray<{ value: SharedBindChoice; label: string; hint: string }> = [
+  {
+    value: "lan",
+    label: "Private network",
+    hint: "Listen on all interfaces (0.0.0.0) for LAN, VPN, or legacy --tailscale-auth style access",
+  },
+  {
+    value: "tailnet",
+    label: "Tailnet",
+    hint: "Listen only on the machine's detected Tailscale address",
+  },
+];
+
+/**
+ * The preset a usage choice maps to. `shared` needs the follow-up bind answer;
+ * `advanced` has no preset because it goes through the manual path.
+ */
+export function serverPresetForUsage(choice: "local" | "unsure"): ServerPreset;
+export function serverPresetForUsage(choice: "shared", bind: SharedBindChoice): ServerPreset;
+export function serverPresetForUsage(choice: "advanced"): null;
+export function serverPresetForUsage(choice: ServerUsageChoice, bind?: SharedBindChoice): ServerPreset | null;
+export function serverPresetForUsage(choice: ServerUsageChoice, bind?: SharedBindChoice): ServerPreset | null {
+  switch (choice) {
+    case "local":
+      return { bind: "loopback", requireLogin: false };
+    case "unsure":
+      return { bind: "loopback", requireLogin: true };
+    case "shared":
+      return { bind: bind ?? "lan", requireLogin: true };
+    case "advanced":
+      return null;
+  }
+}
+
+/** The usage choice that describes an existing config, used to preselect it when reconfiguring. */
+export function inferUsageChoice(server?: Partial<ServerConfig>): ServerUsageChoice {
+  if (!server?.deploymentMode) return "local";
+  const bind = inferConfiguredBind(server);
+  if (server.deploymentMode === "local_trusted") return bind === "loopback" ? "local" : "advanced";
+  if (server.exposure === "public" || bind === "custom") return "advanced";
+  return bind === "loopback" ? "unsure" : "shared";
+}
 
 function cancelled(): never {
   p.cancel("Setup cancelled.");
   process.exit(0);
 }
 
-export async function promptServer(opts?: {
-  currentServer?: Partial<ServerConfig>;
-  currentAuth?: Partial<AuthConfig>;
-}): Promise<{ server: ServerConfig; auth: AuthConfig }> {
-  const currentServer = opts?.currentServer;
-  const currentAuth = opts?.currentAuth;
-  const currentBind = inferConfiguredBind(currentServer);
-
-  const bindSelection = await p.select({
-    message: "Reachability",
-    options: [
-      {
-        value: "loopback" as const,
-        label: "Trusted local",
-        hint: "Recommended for first run: localhost only, no login friction",
-      },
-      {
-        value: "lan" as const,
-        label: "Private network",
-        hint: "Broad private bind for LAN, VPN, or legacy --tailscale-auth style access",
-      },
-      {
-        value: "tailnet" as const,
-        label: "Tailnet",
-        hint: "Private authenticated access using the machine's detected Tailscale address",
-      },
-      {
-        value: "custom" as const,
-        label: "Custom",
-        hint: "Choose exact auth mode, exposure, and host manually",
-      },
-    ],
-    initialValue: currentBind,
-  });
-
-  if (p.isCancel(bindSelection)) cancelled();
-  const bind = bindSelection as BindMode;
-
+async function promptPort(currentServer?: Partial<ServerConfig>): Promise<number> {
   const portStr = await p.text({
     message: "Server port",
     defaultValue: String(currentServer?.port ?? 3100),
@@ -63,47 +114,100 @@ export async function promptServer(opts?: {
   });
 
   if (p.isCancel(portStr)) cancelled();
-  const port = Number(portStr) || 3100;
-  const serveUi = currentServer?.serveUi ?? true;
+  return Number(portStr) || 3100;
+}
 
-  if (bind === "loopback") {
-    return buildPresetServerConfig("loopback", {
+async function promptAllowedHostnames(input: {
+  currentServer?: Partial<ServerConfig>;
+  placeholder: string;
+}): Promise<string[]> {
+  const allowedHostnamesInput = await p.text({
+    message: "Allowed private hostnames (comma-separated, optional)",
+    defaultValue: (input.currentServer?.allowedHostnames ?? []).join(", "),
+    placeholder: input.placeholder,
+    validate: (val) => {
+      try {
+        parseHostnameCsv(val ?? "");
+        return;
+      } catch (err) {
+        return err instanceof Error ? err.message : "Invalid hostname list";
+      }
+    },
+  });
+
+  if (p.isCancel(allowedHostnamesInput)) cancelled();
+  return parseHostnameCsv(allowedHostnamesInput);
+}
+
+export async function promptServer(opts?: {
+  currentServer?: Partial<ServerConfig>;
+  currentAuth?: Partial<AuthConfig>;
+}): Promise<{ server: ServerConfig; auth: AuthConfig }> {
+  const currentServer = opts?.currentServer;
+  const currentAuth = opts?.currentAuth;
+  const currentBind = inferConfiguredBind(currentServer);
+
+  const usageSelection = await p.select({
+    message: SERVER_USAGE_PROMPT_MESSAGE,
+    options: SERVER_USAGE_OPTIONS.map((option) => ({ ...option })),
+    initialValue: inferUsageChoice(currentServer),
+  });
+
+  if (p.isCancel(usageSelection)) cancelled();
+  const usage = usageSelection as ServerUsageChoice;
+
+  if (usage === "local") {
+    p.log.message(pc.dim(LOCAL_ONLY_LOGIN_LATER_COPY));
+    const port = await promptPort(currentServer);
+    return buildPresetServerConfig(serverPresetForUsage("local"), {
       port,
       allowedHostnames: [],
-      serveUi,
+      serveUi: currentServer?.serveUi ?? true,
     });
   }
 
-  if (bind === "lan" || bind === "tailnet") {
-    const allowedHostnamesInput = await p.text({
-      message: "Allowed private hostnames (comma-separated, optional)",
-      defaultValue: (currentServer?.allowedHostnames ?? []).join(", "),
-      placeholder:
-        bind === "tailnet"
-          ? "your-machine.tailnet.ts.net"
-          : "dotta-macbook-pro, host.docker.internal",
-      validate: (val) => {
-        try {
-          parseHostnameCsv(val ?? "");
-          return;
-        } catch (err) {
-          return err instanceof Error ? err.message : "Invalid hostname list";
-        }
-      },
+  if (usage === "unsure") {
+    p.log.message(
+      pc.dim(
+        `Login will be required and the server stays on localhost. Run ${pc.cyan("paperclipai configure --section server")} later to reach it from other devices.`,
+      ),
+    );
+    const port = await promptPort(currentServer);
+    return buildPresetServerConfig(serverPresetForUsage("unsure"), {
+      port,
+      allowedHostnames: [],
+      serveUi: currentServer?.serveUi ?? true,
+    });
+  }
+
+  if (usage === "shared") {
+    const bindSelection = await p.select({
+      message: SHARED_BIND_PROMPT_MESSAGE,
+      options: SHARED_BIND_OPTIONS.map((option) => ({ ...option })),
+      initialValue: currentBind === "tailnet" ? "tailnet" : "lan",
+    });
+    if (p.isCancel(bindSelection)) cancelled();
+    const bind = bindSelection as SharedBindChoice;
+
+    const port = await promptPort(currentServer);
+    const allowedHostnames = await promptAllowedHostnames({
+      currentServer,
+      placeholder: bind === "tailnet" ? "your-machine.tailnet.ts.net" : "dotta-macbook-pro, host.docker.internal",
     });
 
-    if (p.isCancel(allowedHostnamesInput)) cancelled();
-
-    const preset = buildPresetServerConfig(bind, {
+    const preset = buildPresetServerConfig(serverPresetForUsage("shared", bind), {
       port,
-      allowedHostnames: parseHostnameCsv(allowedHostnamesInput),
-      serveUi,
+      allowedHostnames,
+      serveUi: currentServer?.serveUi ?? true,
     });
     if (bind === "tailnet" && isLoopbackHost(preset.server.host)) {
       p.log.warn(TAILNET_BIND_WARNING);
     }
     return preset;
   }
+
+  const port = await promptPort(currentServer);
+  const serveUi = currentServer?.serveUi ?? true;
 
   const deploymentModeSelection = await p.select({
     message: "Auth mode",
@@ -167,22 +271,10 @@ export async function promptServer(opts?: {
 
   let allowedHostnames: string[] = [];
   if (deploymentMode === "authenticated" && exposure === "private") {
-    const allowedHostnamesInput = await p.text({
-      message: "Allowed private hostnames (comma-separated, optional)",
-      defaultValue: (currentServer?.allowedHostnames ?? []).join(", "),
+    allowedHostnames = await promptAllowedHostnames({
+      currentServer,
       placeholder: "dotta-macbook-pro, your-host.tailnet.ts.net",
-      validate: (val) => {
-        try {
-          parseHostnameCsv(val ?? "");
-          return;
-        } catch (err) {
-          return err instanceof Error ? err.message : "Invalid hostname list";
-        }
-      },
     });
-
-    if (p.isCancel(allowedHostnamesInput)) cancelled();
-    allowedHostnames = parseHostnameCsv(allowedHostnamesInput);
   }
 
   let publicBaseUrl: string | undefined;

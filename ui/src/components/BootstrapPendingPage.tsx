@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { Loader2, ShieldCheck, Terminal, TriangleAlert } from "lucide-react";
 import { Link } from "@/lib/router";
 import { Button } from "@/components/ui/button";
-import { BOOTSTRAP_FALLBACK_COMMAND } from "@/bootstrapSetup";
+import { BOOTSTRAP_FALLBACK_COMMAND, OPERATOR_CREDENTIALS_COMMAND } from "@/bootstrapSetup";
 import type { AuthSession } from "@paperclipai/shared";
 import { Card } from "@/components/ui/card";
 
@@ -14,6 +14,28 @@ type BootstrapPendingPageProps = {
   claimError?: { status?: number; message?: string } | null;
   onClaim: () => void;
 };
+
+/**
+ * The same explainer the CLI prints when login is chosen during onboarding
+ * (doc/DEPLOYMENT-MODES.md sections 4 and 8): accounts belong to this
+ * instance, and the first admin is whoever claims it.
+ */
+export const INSTANCE_LOGIN_EXPLAINER =
+  "Login belongs to this Paperclip instance, not to a hosted subscription. Accounts are stored here, on this install.";
+
+export const CLAIM_MAKES_FIRST_ADMIN_COPY =
+  "Claiming makes the signed-in account the first admin of this instance.";
+
+export const INVITE_MAKES_FIRST_ADMIN_COPY =
+  "Accepting the invite makes that account the first admin of this instance.";
+
+function LoginExplainer({ firstAdminCopy }: { firstAdminCopy: string }) {
+  return (
+    <p className="mt-3 text-sm text-muted-foreground" data-testid="instance-login-explainer">
+      {INSTANCE_LOGIN_EXPLAINER} {firstAdminCopy}
+    </p>
+  );
+}
 
 function CliFallback({ hasActiveInvite = false }: { hasActiveInvite?: boolean }) {
   return (
@@ -29,6 +51,13 @@ function CliFallback({ hasActiveInvite = false }: { hasActiveInvite?: boolean })
       </p>
       <pre className="mt-3 overflow-x-auto rounded-md border border-border bg-muted/30 p-3 font-mono text-xs">
 {BOOTSTRAP_FALLBACK_COMMAND}
+      </pre>
+      <p className="mt-3 text-sm text-muted-foreground">
+        Did this database already run without login? Keep its existing operator account instead of creating a
+        new admin:
+      </p>
+      <pre className="mt-2 overflow-x-auto rounded-md border border-border bg-muted/30 p-3 font-mono text-xs">
+{OPERATOR_CREDENTIALS_COMMAND}
       </pre>
     </div>
   );
@@ -81,6 +110,7 @@ export function BootstrapPendingPage({
           This instance runs in invite-only mode. The operator must generate a one-time first-admin invite URL
           from the host. Once you have the link, open it from this browser to finish setup.
         </p>
+        <LoginExplainer firstAdminCopy={INVITE_MAKES_FIRST_ADMIN_COPY} />
         <CliFallback hasActiveInvite={hasActiveInvite} />
         <p className="mt-4 text-xs text-muted-foreground">
           Browser-based claim is intentionally disabled in public mode so anyone on the network can't promote
@@ -125,6 +155,7 @@ export function BootstrapPendingPage({
           No admin has claimed this instance yet. Sign in or create your Paperclip account to become the first
           admin from this browser.
         </p>
+        <LoginExplainer firstAdminCopy={CLAIM_MAKES_FIRST_ADMIN_COPY} />
         <div className="mt-5">
           <Button asChild>
             <Link to="/auth?next=/">Sign in / Create account</Link>
@@ -143,6 +174,7 @@ export function BootstrapPendingPage({
       <p className="mt-2 text-sm text-muted-foreground">
         No admin has claimed this instance yet. Claim it now to become the first admin and start onboarding.
       </p>
+      <LoginExplainer firstAdminCopy={CLAIM_MAKES_FIRST_ADMIN_COPY} />
       <div className="mt-5 flex flex-wrap items-center gap-3">
         <Button onClick={onClaim} disabled={isClaiming}>
           {isClaiming && <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />}

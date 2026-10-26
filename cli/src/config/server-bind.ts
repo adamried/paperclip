@@ -43,10 +43,37 @@ export function detectTailnetBindHost(): string | undefined {
   }
 }
 
+export type PresetBind = Exclude<BindMode, "custom">;
+
+/**
+ * A server preset: where the server listens and whether a login is required.
+ *
+ * The two are independent (doc/DEPLOYMENT-MODES.md section 3): `loopback`
+ * works with or without login, while `lan` and `tailnet` always require it
+ * because `local_trusted` is only safe on loopback. The bare bind-name form
+ * keeps the three historical presets unchanged: `loopback` means no login,
+ * `lan` and `tailnet` mean login.
+ */
+export type ServerPreset = {
+  bind: PresetBind;
+  /** Defaults to `bind !== "loopback"`, which is the historical behaviour. */
+  requireLogin?: boolean;
+};
+
+export function resolveServerPreset(preset: PresetBind | ServerPreset): Required<ServerPreset> {
+  const bind = typeof preset === "string" ? preset : preset.bind;
+  const requireLogin = typeof preset === "string" ? bind !== "loopback" : (preset.requireLogin ?? bind !== "loopback");
+  if (!requireLogin && bind !== "loopback") {
+    throw new Error(`Login is required for bind=${bind}: local_trusted mode is only safe on loopback.`);
+  }
+  return { bind, requireLogin };
+}
+
 export function buildPresetServerConfig(
-  bind: Exclude<BindMode, "custom">,
+  preset: PresetBind | ServerPreset,
   input: BaseServerInput,
 ): { server: ServerConfig; auth: AuthConfig } {
+  const { bind, requireLogin } = resolveServerPreset(preset);
   const host =
     bind === "loopback"
       ? LOOPBACK_BIND_HOST
@@ -56,7 +83,7 @@ export function buildPresetServerConfig(
 
   return {
     server: {
-      deploymentMode: bind === "loopback" ? "local_trusted" : "authenticated",
+      deploymentMode: requireLogin ? "authenticated" : "local_trusted",
       exposure: "private",
       bind,
       customBindHost: undefined,
