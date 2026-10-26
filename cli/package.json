@@ -52,6 +52,7 @@
     "@paperclipai/server": "workspace:*",
     "@paperclipai/shared": "workspace:*",
     "@paperclipai/hermes-paperclip-adapter": "workspace:*",
+    "better-auth": "1.7.2",
     "drizzle-orm": "0.45.2",
     "dotenv": "^17.4.2",
     "commander": "^15.0.0",

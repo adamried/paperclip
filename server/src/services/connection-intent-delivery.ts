@@ -1,4 +1,5 @@
 import { connectionIntentService } from "./connection-intents.js";
+import { AGENT_SENTINEL_USER_ID } from "@paperclipai/shared";
 import { and, eq, isNull, lte, asc, notInArray, desc, sql } from "drizzle-orm";
 import { connectionIntentDeliveries, issueThreadInteractions, issues, agentWakeupRequests, companyMemberships, heartbeatRuns, chatConversations, chatEndpoints, type Db } from "@paperclipai/db";
 import type { heartbeatService } from "./heartbeat.js";
@@ -124,7 +125,9 @@ export function connectionIntentDeliveryService(db: Db, heartbeat: Pick<Heartbea
       return;
     }
     const userId = interaction.addresseeUserId;
-    if (userId !== "local-board") {
+    // The agent sentinel never holds a membership row; every human addressee
+    // (the operator included) does.
+    if (userId !== AGENT_SENTINEL_USER_ID) {
       const [membership] = await db.select().from(companyMemberships).where(and(
         eq(companyMemberships.companyId, claimed.companyId), eq(companyMemberships.principalType, "user"),
         eq(companyMemberships.principalId, userId ?? ""), eq(companyMemberships.status, "active"),

@@ -1,4 +1,5 @@
 import { connectionPurposeTransportSchema } from "@paperclipai/shared";
+import { AGENT_SENTINEL_USER_NAME } from "../operator-identity.js";
 import { syncConnectionCredentialBindings } from "./connection-credential-bindings.js";
 import { canBrowseProjectRepositoryGrant, mergeProjectRepository } from "./project-repositories.js";
 import { captureRunIdentity } from "./run-identity.js";
@@ -144,6 +145,7 @@ import type {
   VercelConnectGrantReference,
 } from "@paperclipai/shared";
 import {
+  AGENT_SENTINEL_USER_ID,
   CLASS3_STATIC_LEASE_ALLOWLIST,
   GITHUB_CONNECTOR_PROFILES,
   GOOGLE_WORKSPACE_CONNECTOR_PROFILES,
@@ -1902,7 +1904,7 @@ function toToolCallEvent(
 }
 
 function userFallbackName(userId: string): string {
-  if (userId === "local-board") return "Board";
+  if (userId === AGENT_SENTINEL_USER_ID) return AGENT_SENTINEL_USER_NAME;
   return userId;
 }
 

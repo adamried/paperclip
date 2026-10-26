@@ -88,6 +88,7 @@ import type {
   SuccessfulRunHandoffState,
 } from "@paperclipai/shared";
 import {
+  AGENT_SENTINEL_USER_ID,
   clampIssueRequestDepth,
   extractAgentMentionIds,
   extractProjectMentionIds,
@@ -218,10 +219,12 @@ export const MAX_CHILD_ISSUES_CREATED_BY_HELPER = 25;
 const MAX_CHILD_COMPLETION_SUMMARIES = 20;
 const CHILD_COMPLETION_SUMMARY_BODY_MAX_CHARS = 500;
 // Non-human author sentinels that agents post under. These ARE eligible for
-// agent-attribution derivation even though `local-board` is also materialized
-// as a row in the `user` table (it is the implicit board admin). Genuine human
-// users — real signups with their own ids — are never reattributed.
-const NON_HUMAN_SENTINEL_AUTHOR_USER_IDS = new Set<string>(["local-board"]);
+// agent-attribution derivation even though the sentinel is also materialized
+// as a row in the `user` table (so agent-authored foreign keys resolve).
+// Genuine human users — the dedicated operator and real signups with their own
+// ids — are never reattributed. On a legacy instance the sentinel also doubles
+// as the operator, which is why run linkage, not timing, decides attribution.
+const NON_HUMAN_SENTINEL_AUTHOR_USER_IDS = new Set<string>([AGENT_SENTINEL_USER_ID]);
 const ISSUE_COMMENT_RUN_LOG_DERIVATION_MAX_LOG_BYTES = 2_000_000;
 const ISSUE_COMMENT_RUN_LOG_DERIVATION_CHUNK_BYTES = 256_000;
 const ISSUE_COMMENT_RUN_LOG_DERIVATION_END_SLACK_MS = 60_000;

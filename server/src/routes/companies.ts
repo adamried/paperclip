@@ -67,7 +67,14 @@ import {
 import { isCloudManagedInstance } from "../services/cloud-instance.js";
 import { getHiddenSettings } from "../services/settings-visibility.js";
 import type { StorageService } from "../storage/types.js";
-import { assertBoard, assertCompanyAccess, assertInstanceAdmin, getActorInfo, hasCompanyAccess } from "./authz.js";
+import {
+  assertBoard,
+  assertCompanyAccess,
+  assertInstanceAdmin,
+  getActorInfo,
+  hasCompanyAccess,
+  requireActorUserId,
+} from "./authz.js";
 import { COMPANY_IMPORT_ROUTE_PATH } from "./company-import-paths.js";
 
 // A company import can arrive one of two ways on the import + preview routes:
@@ -1203,7 +1210,7 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
     if (!(req.actor.source === "local_implicit" || req.actor.isInstanceAdmin)) {
       throw forbidden("Instance admin required");
     }
-    const ownerPrincipalId = req.actor.userId ?? "local-board";
+    const ownerPrincipalId = requireActorUserId(req);
     const company = await svc.create({
       ...req.body,
       defaultResponsibleUserId: req.body.defaultResponsibleUserId ?? ownerPrincipalId,
@@ -1263,7 +1270,7 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
         body = {
           ...body,
           feedbackDataSharingConsentAt: new Date(),
-          feedbackDataSharingConsentByUserId: req.actor.userId ?? "local-board",
+          feedbackDataSharingConsentByUserId: requireActorUserId(req),
           feedbackDataSharingTermsVersion:
             typeof body.feedbackDataSharingTermsVersion === "string" && body.feedbackDataSharingTermsVersion.length > 0
               ? body.feedbackDataSharingTermsVersion
@@ -1438,7 +1445,7 @@ function importJobActorKey(req: Request) {
   if (req.actor.source === "cloud_tenant") {
     return `cloud-tenant:${cloudTenantRequestKey(req)}`;
   }
-  return `board:${req.actor.userId ?? "local-board"}`;
+  return `board:${requireActorUserId(req)}`;
 }
 
 function createImportJob(

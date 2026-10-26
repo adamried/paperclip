@@ -13,6 +13,33 @@ export type BindMode = (typeof BIND_MODES)[number];
 export const AUTH_BASE_URL_MODES = ["auto", "explicit"] as const;
 export type AuthBaseUrlMode = (typeof AUTH_BASE_URL_MODES)[number];
 
+/**
+ * The non-human sentinel user id that agent-authored rows are written under
+ * when an agent run reaches the API through the implicit local actor (no
+ * bearer, `X-Paperclip-Run-Id` present). It is a real `user` row so foreign
+ * keys resolve, but it is never a seat on the Board and never the operator:
+ * new instances grant it no `instance_admin` role and no company membership.
+ * Comment attribution treats it as "an agent posted this" and derives the
+ * agent from the run.
+ */
+export const AGENT_SENTINEL_USER_ID = "local-board";
+
+/**
+ * How the instance identifies its operator (the implicit human actor in
+ * `local_trusted` mode, and the account that keeps that identity after login
+ * is enabled):
+ * - `dedicated`: a dedicated operator user is recorded in
+ *   `instance_settings.general.operatorUserId`.
+ * - `legacy`: nothing is recorded and the agent sentinel still holds
+ *   `instance_admin`; the sentinel doubles as the operator in memory only.
+ *   The instance predates dedicated operator identities and is never
+ *   migrated at startup.
+ * - `none`: nothing is recorded and the sentinel is not an admin (for example
+ *   a fresh `authenticated` install whose first admin is a real signup).
+ */
+export const OPERATOR_IDENTITY_KINDS = ["dedicated", "legacy", "none"] as const;
+export type OperatorIdentityKind = (typeof OPERATOR_IDENTITY_KINDS)[number];
+
 export const AGENT_STATUSES = [
   "active",
   "paused",

@@ -10,6 +10,7 @@ import { addAllowedHostname } from "./commands/allowed-hostname.js";
 import { heartbeatRun } from "./commands/heartbeat-run.js";
 import { runCommand } from "./commands/run.js";
 import { bootstrapCeoInvite } from "./commands/auth-bootstrap-ceo.js";
+import { setOperatorCredentialsCommand } from "./commands/operator-credentials.js";
 import { dbBackupCommand } from "./commands/db-backup.js";
 import { registerEnvLabCommands } from "./commands/env-lab.js";
 import { registerContextCommands } from "./commands/client/context.js";
@@ -274,6 +275,17 @@ auth
   .option("--expires-hours <hours>", "Invite expiration window in hours", (value) => Number(value))
   .option("--base-url <url>", "Public base URL used to print invite link")
   .action(bootstrapCeoInvite);
+
+auth
+  .command("set-operator-credentials")
+  .description("Attach an email/password login to this instance's operator account (keeps its companies, tasks, and provider defaults)")
+  .option("-c, --config <path>", "Path to config file")
+  .option("-d, --data-dir <path>", DATA_DIR_OPTION_HELP)
+  .option("--email <email>", "Email the operator will sign in with (must be unique on the instance)")
+  .option("--name <name>", "Display name to set when the operator still has the default name")
+  .option("--password-stdin", "Read the password from stdin instead of prompting", false)
+  .option("--db-url <url>", "Database connection string (defaults to the configured database)")
+  .action(setOperatorCredentialsCommand);
 
 registerClientAuthCommands(auth);
 

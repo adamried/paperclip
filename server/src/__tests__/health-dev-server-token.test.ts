@@ -94,6 +94,7 @@ describe("GET /health dev-server supervisor access", () => {
             processStartedAt: "2026-03-20T11:00:00.000Z",
             git: { available: false, unavailableReason: "git_unavailable" },
           },
+          operatorIdentity: () => "none",
         }),
       );
 
@@ -110,6 +111,7 @@ describe("GET /health dev-server supervisor access", () => {
         commit: null,
         bootstrapStatus: "ready",
         bootstrapInviteActive: false,
+        operatorIdentity: "none",
         devServer: {
           enabled: true,
           restartRequired: true,

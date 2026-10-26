@@ -6,6 +6,7 @@ import { createDb, instanceUserRoles, invites } from "@paperclipai/db";
 import { inferBindModeFromHost } from "@paperclipai/shared";
 import { loadPaperclipEnvFile } from "../config/env.js";
 import { readConfig, resolveConfigPath } from "../config/store.js";
+import { resolveLocalDatabaseUrl } from "./operator-credentials.js";
 
 function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
@@ -13,20 +14,6 @@ function hashToken(token: string) {
 
 function createInviteToken() {
   return `pcp_bootstrap_${randomBytes(24).toString("hex")}`;
-}
-
-function resolveDbUrl(configPath?: string, explicitDbUrl?: string) {
-  if (explicitDbUrl) return explicitDbUrl;
-  const config = readConfig(configPath);
-  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
-  if (config?.database.mode === "postgres" && config.database.connectionString) {
-    return config.database.connectionString;
-  }
-  if (config?.database.mode === "embedded-postgres") {
-    const port = config.database.embeddedPostgresPort ?? 54329;
-    return `postgres://paperclip:paperclip@127.0.0.1:${port}/paperclip`;
-  }
-  return null;
 }
 
 function resolveBaseUrl(configPath?: string, explicitBaseUrl?: string) {
@@ -71,7 +58,7 @@ export async function bootstrapCeoInvite(opts: {
     return;
   }
 
-  const dbUrl = resolveDbUrl(configPath, opts.dbUrl);
+  const dbUrl = resolveLocalDatabaseUrl(configPath, opts.dbUrl);
   if (!dbUrl) {
     p.log.error(
       "Could not resolve database connection for bootstrap.",

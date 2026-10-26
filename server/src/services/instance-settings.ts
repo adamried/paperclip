@@ -38,6 +38,33 @@ import { getOperatorSettingDefaults } from "./setting-defaults.js";
 
 const DEFAULT_SINGLETON_KEY = "default";
 const instanceGeneralSettingsStorageSchema = instanceGeneralSettingsSchema.strip();
+
+/**
+ * Keys in `instance_settings.general` the server records for itself. They are
+ * never part of the general-settings API view, never patchable through it,
+ * and a user write to general settings must never drop them. `updateGeneral`
+ * re-applies the stored value of every key listed here after normalization,
+ * so the list is the one place to register a new server-managed key.
+ */
+export const SERVER_MANAGED_GENERAL_KEYS = ["operatorUserId"] as const;
+function rawGeneralRecord(raw: unknown): Record<string, unknown> {
+  return raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+}
+
+function pickServerManagedGeneralKeys(raw: unknown): Record<string, unknown> {
+  const stored = rawGeneralRecord(raw);
+  const picked: Record<string, unknown> = {};
+  for (const key of SERVER_MANAGED_GENERAL_KEYS) {
+    if (stored[key] !== undefined) picked[key] = stored[key];
+  }
+  return picked;
+}
+
+function stripServerManagedGeneralKeys(general: InstanceGeneralSettings): InstanceGeneralSettings {
+  const view: Record<string, unknown> = { ...general };
+  for (const key of SERVER_MANAGED_GENERAL_KEYS) delete view[key];
+  return view as unknown as InstanceGeneralSettings;
+}
 const instanceExperimentalSettingsStorageSchema = instanceExperimentalSettingsSchema.strip();
 const TRUTHY_RUNTIME_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
 
@@ -209,6 +236,9 @@ function normalizeGeneralSettings(raw: unknown): InstanceGeneralSettings {
       backupRetention: parsed.data.backupRetention ?? DEFAULT_BACKUP_RETENTION,
       // Absent => unrestricted; only carry through an explicit policy.
       ...(parsed.data.executionMode ? { executionMode: parsed.data.executionMode } : {}),
+      // Server-managed operator record; carried through so a general-settings
+      // write never drops it (see `toGeneralView` for the API-facing strip).
+      ...(parsed.data.operatorUserId ? { operatorUserId: parsed.data.operatorUserId } : {}),
     };
   }
   return {
@@ -426,7 +456,13 @@ export function instanceSettingsService(db: Db, options: InstanceSettingsService
   const operatorDefaults = getOperatorSettingDefaults(options.runtimeEnv ?? process.env);
 
   function toGeneralView(raw: unknown): InstanceGeneralSettings {
-    return applyOperatorGeneralDefaults(normalizeGeneralSettings(raw), operatorDefaults);
+    // Server-managed keys (`operatorUserId`) are identity metadata, not
+    // settings: stripped from every API view so the general settings contract
+    // stays unchanged and a full-GET echo never carries them.
+    return applyOperatorGeneralDefaults(
+      stripServerManagedGeneralKeys(normalizeGeneralSettings(raw)),
+      operatorDefaults,
+    );
   }
 
   function toExperimentalView(raw: unknown): InstanceExperimentalSettingsWithManaged {
@@ -540,7 +576,9 @@ export function instanceSettingsService(db: Db, options: InstanceSettingsService
       const [updated] = await db
         .update(instanceSettings)
         .set({
-          general: { ...nextGeneral },
+          // A settings write never drops what the server recorded for itself,
+          // even a key this build's schema does not know yet.
+          general: { ...nextGeneral, ...pickServerManagedGeneralKeys(current.general) },
           updatedAt: now,
         })
         .where(eq(instanceSettings.id, current.id))
@@ -575,5 +613,38 @@ export function instanceSettingsService(db: Db, options: InstanceSettingsService
         .select({ id: companies.id })
         .from(companies)
         .then((rows) => rows.map((row) => row.id)),
+
+    /**
+     * The dedicated operator user recorded at first `local_trusted` start, or
+     * null for a legacy / fresh-authenticated instance. Read from the stored
+     * row, not the API view, which strips the key.
+     */
+    getOperatorUserId: async (
+      readOptions?: { db?: InstanceSettingsWriteDb },
+    ): Promise<string | null> => {
+      const row = await getOrCreateRow(readOptions?.db);
+      return normalizeGeneralSettings(row.general).operatorUserId ?? null;
+    },
+
+    /**
+     * Record the dedicated operator user id. Merges into the stored general
+     * object so sibling settings are untouched. Startup calls this exactly
+     * once, when it creates the operator on a fresh local instance; it is
+     * never called for a legacy instance.
+     */
+    recordOperatorUserId: async (
+      userId: string,
+      writeOptions?: { db?: InstanceSettingsWriteDb },
+    ): Promise<void> => {
+      const runner = writeOptions?.db ?? db;
+      const current = await getOrCreateRow(runner);
+      await runner
+        .update(instanceSettings)
+        .set({
+          general: { ...rawGeneralRecord(current.general), operatorUserId: userId },
+          updatedAt: new Date(),
+        })
+        .where(eq(instanceSettings.id, current.id));
+    },
   };
 }

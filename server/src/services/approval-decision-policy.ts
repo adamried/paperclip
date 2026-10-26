@@ -1,4 +1,6 @@
 import { and, eq } from "drizzle-orm";
+import { AGENT_SENTINEL_USER_ID } from "@paperclipai/shared";
+import { AGENT_SENTINEL_USER_NAME } from "../operator-identity.js";
 import { authUsers, userApprovalDecisionPolicies, type Db } from "@paperclipai/db";
 import type { ApprovalDecisionPolicy, UpdateApprovalDecisionPolicy } from "@paperclipai/shared";
 import { forbidden } from "../errors.js";
@@ -35,7 +37,9 @@ export async function assertApprovalDecisionAllowed(
   const addresseeName =
     addressee?.name?.trim()
     || addressee?.email?.trim()
-    || (approval.addresseeUserId === "local-board" ? "the Board owner" : approval.addresseeUserId.slice(0, 8));
+    || (approval.addresseeUserId === AGENT_SENTINEL_USER_ID
+      ? AGENT_SENTINEL_USER_NAME
+      : approval.addresseeUserId.slice(0, 8));
   throw forbidden(
     `Only ${addresseeName} can decide this approval. Ask them to decide it, or to allow any Board member in their profile settings.`,
     {

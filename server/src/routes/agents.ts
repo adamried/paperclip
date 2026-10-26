@@ -92,7 +92,7 @@ import {
 import { badRequest, conflict, forbidden, HttpError, notFound, unprocessable } from "../errors.js";
 import { PAPERCLIP_CORE_SKILL_KEYS } from "../services/company-skills.js";
 import { createRunSecretRedactionRegistry } from "../services/run-secret-redaction.js";
-import { assertAuthenticated, assertBoard, assertCompanyAccess, assertInstanceAdmin, buildActorSecretContext, getAccessibleResource, getActorInfo, hasCompanyAccess } from "./authz.js";
+import { assertAuthenticated, assertBoard, assertCompanyAccess, assertInstanceAdmin, buildActorSecretContext, getAccessibleResource, getActorInfo, hasCompanyAccess, requireActorUserId } from "./authz.js";
 import { runAdapterLoginStartSpine } from "./adapter-login-route-spine.js";
 import { isLoginCommandSupportedAdapterType } from "../services/login-command.js";
 import {
@@ -7208,7 +7208,7 @@ export function agentRoutes(
       await logActivity(db, {
         companyId: run.companyId,
         actorType: "user",
-        actorId: req.actor.userId ?? "local-board",
+        actorId: requireActorUserId(req),
         action: "provider_trace.workspace_diffs_reprojected",
         entityType: "heartbeat_run",
         entityId: run.id,

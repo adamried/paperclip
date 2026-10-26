@@ -376,6 +376,9 @@ export {
 } from "./oauth-endpoint-url.js";
 export {
   COMPANY_STATUSES,
+  AGENT_SENTINEL_USER_ID,
+  OPERATOR_IDENTITY_KINDS,
+  type OperatorIdentityKind,
   DEPLOYMENT_MODES,
   DEPLOYMENT_EXPOSURES,
   BIND_MODES,

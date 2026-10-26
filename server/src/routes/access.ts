@@ -2183,9 +2183,7 @@ async function resolveAcceptedInviteJoinRequest(
 
   if (!invite.companyId) return null;
 
-  const actorRequestingUserId = isLocalImplicit(req)
-    ? "local-board"
-    : req.actor.userId ?? null;
+  const actorRequestingUserId = req.actor.userId ?? null;
   const actorEmail = await resolveActorEmail(db, req);
   if (!actorRequestingUserId && !actorEmail) return null;
 
@@ -2821,14 +2819,11 @@ export function accessRoutes(
     validate(resolveCliAuthChallengeSchema),
     async (req, res) => {
       const id = (req.params.id as string).trim();
-      if (
-        req.actor.type !== "board" ||
-        (!req.actor.userId && !isLocalImplicit(req))
-      ) {
+      if (req.actor.type !== "board" || !req.actor.userId) {
         throw unauthorized("Sign in before approving CLI access");
       }
 
-      const userId = req.actor.userId ?? "local-board";
+      const userId = req.actor.userId;
       const approved = await boardAuth.approveCliAuthChallenge(
         id,
         req.body.token,
@@ -3164,8 +3159,10 @@ export function accessRoutes(
     }
 
     const approvedAt = new Date();
+    // An invite auto-approved by the implicit local operator is approved by
+    // the operator; a session actor's invite keeps its inviter.
     const approvedByUserId =
-      input.invite.invitedByUserId ?? (isLocalImplicit(input.req) ? "local-board" : null);
+      input.invite.invitedByUserId ?? (isLocalImplicit(input.req) ? input.req.actor.userId ?? null : null);
     const approved = await db
       .update(joinRequests)
       .set({
@@ -3669,15 +3666,12 @@ export function accessRoutes(
         if (req.body.requestType !== "human") {
           throw badRequest("Bootstrap invite requires human request type");
         }
-        if (
-          req.actor.type !== "board" ||
-          (!req.actor.userId && !isLocalImplicit(req))
-        ) {
+        if (req.actor.type !== "board" || !req.actor.userId) {
           throw unauthorized(
             "Authenticated user required for bootstrap acceptance"
           );
         }
-        const userId = req.actor.userId ?? "local-board";
+        const userId = req.actor.userId;
         const claimed = await claimFirstInstanceAdmin(db, {
           userId,
           onClaim: async (tx) => {
@@ -3753,7 +3747,7 @@ export function accessRoutes(
         requestType === "human" ? await resolveActorEmail(db, req) : null;
       const actorRequestingUserId =
         requestType === "human"
-          ? req.actor.userId ?? "local-board"
+          ? req.actor.userId ?? null
           : null;
       const canReplayHumanInviteAccept =
         inviteAlreadyAccepted &&
@@ -3922,7 +3916,7 @@ export function accessRoutes(
                   requestIp: requestIp(req),
                   requestingUserId:
                     requestType === "human"
-                      ? req.actor.userId ?? "local-board"
+                      ? req.actor.userId ?? null
                       : null,
                   requestEmailSnapshot:
                     requestType === "human" ? actorEmail : null,
@@ -4309,8 +4303,7 @@ export function accessRoutes(
         .update(joinRequests)
         .set({
           status: "approved",
-          approvedByUserId:
-            req.actor.userId ?? (isLocalImplicit(req) ? "local-board" : null),
+          approvedByUserId: req.actor.userId ?? null,
           approvedAt: new Date(),
           createdAgentId,
           updatedAt: new Date()
@@ -4368,8 +4361,7 @@ export function accessRoutes(
         .update(joinRequests)
         .set({
           status: "rejected",
-          rejectedByUserId:
-            req.actor.userId ?? (isLocalImplicit(req) ? "local-board" : null),
+          rejectedByUserId: req.actor.userId ?? null,
           rejectedAt: new Date(),
           updatedAt: new Date()
         })

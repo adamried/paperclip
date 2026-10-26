@@ -28,7 +28,9 @@ export function AnnouncementWell({ health }: { health?: HealthStatus }) {
   const { onboardingOpen } = useDialogState();
   const toastActions = useOptionalToastActions();
   const toasts = useOptionalToastState();
-  const userId = health?.deploymentMode === "local_trusted" ? "local-board" : (settled ? accountId : null);
+  // In every mode the dismissing user is the account the session reports: in
+  // local_trusted that is the instance's operator user, never the agent sentinel.
+  const userId = settled ? accountId : null;
   const { announcement, dismiss } = useAnnouncement({
     userId, companyId: selectedCompanyId,
     enabled: Boolean(userId && !loading && selectedCompanyId && !onboardingOpen),

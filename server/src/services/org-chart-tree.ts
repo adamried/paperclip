@@ -1,4 +1,5 @@
-import type { OrgTreeNode } from "@paperclipai/shared";
+import { AGENT_SENTINEL_USER_ID, type OrgTreeNode } from "@paperclipai/shared";
+import { AGENT_SENTINEL_USER_NAME } from "../operator-identity.js";
 
 /**
  * Wraps the agent forest the agent service produces into the org chart the
@@ -48,7 +49,7 @@ function userDisplayName(userId: string, user: OrgChartUserSummary | undefined) 
   if (name) return name;
   const email = user?.email?.trim();
   if (email) return email;
-  if (userId === "local-board") return "Board";
+  if (userId === AGENT_SENTINEL_USER_ID) return AGENT_SENTINEL_USER_NAME;
   return userId.slice(0, 8);
 }
 

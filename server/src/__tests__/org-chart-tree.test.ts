@@ -49,12 +49,14 @@ describe("buildOrgChartTree", () => {
     expect(root!.reports[2]!.reports[0]!.kind).toBe("agent");
   });
 
-  it("labels the local board user and unknown users sensibly", () => {
+  it("labels the agent sentinel and unknown users sensibly", () => {
     const [root] = buildOrgChartTree(
       [agent("a", { reportsToUserId: "local-board" }), agent("b", { reportsToUserId: "0123456789" })],
       new Map(),
     );
-    expect(root!.reports.map((node) => node.name).sort()).toEqual(["01234567", "Board"]);
+    // `local-board` is the agent sentinel, never a Board seat; the operator is a
+    // real user and resolves through the profile map like anyone else.
+    expect(root!.reports.map((node) => node.name).sort()).toEqual(["01234567", "Agent runtime"]);
   });
 
   it("lists the distinct manager ids referenced by roots", () => {

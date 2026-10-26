@@ -298,7 +298,7 @@ export function activityRoutes(db: Db) {
     await logActivity(db, {
       companyId,
       actorType: actorUserId ? "user" : "system",
-      actorId: actorUserId ?? "local-board",
+      actorId: actorUserId ?? "system",
       action: "audit.exported",
       entityType: "company",
       entityId: companyId,
